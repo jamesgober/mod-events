@@ -2,7 +2,7 @@
         <img width="108px" height="auto" src="https://raw.githubusercontent.com/jamesgober/jamesgober/main/media/icons/hexagon-3.svg" alt="Triple Hexagon">
     <br>
     <strong>Mod Events</strong>
-    <sup><br><sup>Performance Guide</sup></sup>
+    <sup><br><sup>PERFORMANCE GUIDE</sup></sup>
 </h1>
 
 mod-events is designed for high-performance scenarios. This guide covers performance characteristics, benchmarks, and optimization tips.

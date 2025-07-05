@@ -2,7 +2,7 @@
         <img width="108px" height="auto" src="https://raw.githubusercontent.com/jamesgober/jamesgober/main/media/icons/hexagon-3.svg" alt="Triple Hexagon">
     <br>
     <strong>Mod Events</strong>
-    <sup><br><sup>Migration Guide</sup></sup>
+    <sup><br><sup>MIGRATION GUIDE</sup></sup>
 </h1>
 
 This guide helps you migrate from other event systems to mod-events.

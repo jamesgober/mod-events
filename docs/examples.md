@@ -2,7 +2,7 @@
         <img width="108px" height="auto" src="https://raw.githubusercontent.com/jamesgober/jamesgober/main/media/icons/hexagon-3.svg" alt="Triple Hexagon">
     <br>
     <strong>Mod Events</strong>
-    <sup><br><sup>Examples</sup></sup>
+    <sup><br><sup>USAGE &amp; EXAMPLES</sup></sup>
 </h1>
 
 Comprehensive examples showing different use cases and patterns with mod-events.

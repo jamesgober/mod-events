@@ -2,7 +2,7 @@
         <img width="108px" height="auto" src="https://raw.githubusercontent.com/jamesgober/jamesgober/main/media/icons/hexagon-3.svg" alt="Triple Hexagon">
     <br>
     <strong>Mod Events</strong>
-    <sup><br><sup>Quick Start Guide</sup></sup>
+    <sup><br><sup>QUICK START GUIDE</sup></sup>
 </h1>
 
 This guide will get you up and running with mod-events in under 5 minutes.

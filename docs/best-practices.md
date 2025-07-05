@@ -2,7 +2,7 @@
         <img width="108px" height="auto" src="https://raw.githubusercontent.com/jamesgober/jamesgober/main/media/icons/hexagon-3.svg" alt="Triple Hexagon">
     <br>
     <strong>Mod Events</strong>
-    <sup><br><sup>Best Practices</sup></sup>
+    <sup><br><sup>BEST PRACTICES</sup></sup>
 </h1>
 
 This guide covers recommended patterns and practices for using mod-events effectively.
