@@ -1,0 +1,53 @@
+# ¸_____¸_____¸  
+#  ╲__¸ ┊ ¸__╱   
+# ¸_  ┊ ┊ ┊ ___  James Gober
+# ┊ [_┊ ┊ ┊_] ┊  Contact@JamesGober.com
+# ┊_____A_____┊  https://JamesGober.com
+# JAMES ⬡ GOBER   
+# ===================================================
+[package]
+name = "mod-events"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+license = "Apache-2.0"
+
+homepage = "https://github.com/jamesgober/mod-events"
+repository = "https://github.com/jamesgober/mod-events"
+documentation = "https://docs.rs/mod-events"
+description = "A high-performance, zero-overhead event dispatcher library for Rust"
+keywords = ["events", "dispatcher", "async", "performance", "observer"]
+categories = ["concurrency", "asynchronous", "data-structures"]
+
+authors = ["James Gober <contact@jamesgober.com>"]
+
+
+#####################################################
+# FEATURES
+#####################################################
+[features]
+default = ["async"]
+async = ["tokio"]
+
+
+#####################################################
+# BENCHMARKS
+#####################################################
+[[bench]]
+name = "dispatch_benchmark"
+harness = false
+
+#####################################################
+# DEPENDENCIES
+#####################################################
+[dependencies]
+thiserror = "1.0.56"
+tokio = { version = "1.0", features = ["full"], optional = true }
+
+
+#####################################################
+# DEV DEPENDENCIES
+#####################################################
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+criterion = "0.5"
