@@ -170,12 +170,12 @@ cargo test --release benchmark
 
 ## Documentation
 
-- [Quick Start Guide](./docs/quick-start.md)
-- [API Reference](./docs/api-reference.md) 
-- [Performance Guide](./docs/performance.md)
-- [Examples](./docs/examples.md)
-- [Best Practices](./docs/best-practices.md)
-- [Migration Guide](./docs/migration.md)
+- [Quick Start Guide]([.](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75)/docs/quick-start.md)
+- [API Reference](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/api-reference.md) 
+- [Performance Guide](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/performance.md)
+- [Examples](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/examples.md)
+- [Best Practices](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/best-practices.md)
+- [Migration Guide](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/migration.md)
 
 <br>
 
