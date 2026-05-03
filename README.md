@@ -59,7 +59,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mod-events = "0.1"
+mod-events = "0.2"
 ```
 
 ## Basic Usage
