@@ -5,8 +5,12 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
+# rustsec/audit-check posts findings as GitHub Check Runs, which require
+# the `checks: write` permission. The default GITHUB_TOKEN used by
+# pull-request workflows does not grant it; declaring it here does.
+permissions:
+  contents: read
+  checks: write
 
 jobs:
   check:
@@ -42,16 +46,16 @@ jobs:
         run: cargo doc --no-deps --all-features
 
   msrv:
-    name: msrv (1.75)
+    name: msrv (1.81)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # Pin to declared MSRV; ignore rust-toolchain.toml override.
-      - uses: dtolnay/rust-toolchain@1.75.0
+      - uses: dtolnay/rust-toolchain@1.81.0
       - uses: Swatinem/rust-cache@v2
       - name: build
         # Skip rust-toolchain.toml so the MSRV toolchain is used.
-        run: RUSTUP_TOOLCHAIN=1.75.0 cargo build --all-features --verbose
+        run: RUSTUP_TOOLCHAIN=1.81.0 cargo build --all-features --verbose
 
   audit:
     name: cargo audit
