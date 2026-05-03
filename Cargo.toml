@@ -15,7 +15,12 @@ name = "mod-events"
 # bump; for 0.x crates the convention is to bump MINOR.
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.75"
+# MSRV. Bumped from 1.75 → 1.81 because Cargo lockfile format v4
+# (default since Rust 1.78) cannot be parsed by older toolchains. CI's
+# MSRV job tried 1.75 and failed at lockfile parse before any code
+# compiled. 1.81 is conservative — stable since 2024-09-05, well over a
+# year of release window by mid-2026.
+rust-version = "1.81"
 readme = "README.md"
 license = "Apache-2.0"
 
