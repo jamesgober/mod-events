@@ -8,7 +8,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [0.2.1] — 2026-05-03
 
-Patch release. CI hardening, security advisories cleared, MSRV bumped to keep the committed lockfile parseable. No public API changes from `0.2.0`.
+Patch release. CI hardening, security advisories cleared, MSRV bumped to keep the committed lockfile parseable. No public API changes from `0.2.0`. See the full release notes in [`docs/release/v0.2.1.md`](docs/release/v0.2.1.md).
 
 ### Changed
 - **Breaking (build-time only):** MSRV bumped from `1.75` to `1.81`. Cargo lockfile format v4 (default since Rust 1.78) cannot be parsed by older toolchains, and the MSRV CI job for `1.75` failed at lockfile parse before any code compiled. `1.81` is conservative — stable since 2024-09-05.
@@ -21,7 +21,7 @@ Patch release. CI hardening, security advisories cleared, MSRV bumped to keep th
 
 ### Documentation
 - `README.md` Key Features and Error Handling sections updated to mention `ListenerError`, the lock-free metrics path, FIFO equal-priority ordering, and the `loom`-verified concurrency invariants. Install snippet documents the `1.81` MSRV.
-- `docs/quick-start.md` install snippet bumped to `0.2`; documents the `1.81` MSRV; subscribe example notes the `ListenerError` conversion path.
+- `docs/quick-start.md` install snippet bumped to `0.2.1`; documents the `1.81` MSRV; subscribe example notes the `ListenerError` conversion path.
 - `docs/api-reference.md` rewritten to match the 0.2.x signatures: every handler and trait signature uses `Result<(), ListenerError>` instead of `Result<(), Box<dyn Error + Send + Sync>>`; `EventMetadata::dispatch_count` documented as `u64`; `Priority` shown with `#[derive(Default)]`; `AsyncEventResult<'a>` documented as the canonical async-listener return type; new `ListenerError` section under Error Handling; Performance Characteristics rewritten to reflect the lock-free metrics path and binary-insertion subscribe; obsolete `AsyncResult` / `AsyncHandler` aliases removed.
 - `docs/best-practices.md` reusable-listener example updated to return `Result<(), ListenerError>` and convert foreign errors via `ListenerError::new`.
 - `docs/examples.md` helper signatures updated to return `Result<(), ListenerError>`; the file-write helper converts `io::Error` via `ListenerError::new`.
@@ -29,7 +29,7 @@ Patch release. CI hardening, security advisories cleared, MSRV bumped to keep th
 
 ## [0.2.0] — 2026-05-03
 
-First stable release. Brings the dispatcher in line with the project's REPS engineering standards: typed listener errors, lock-free metrics on the dispatch hot path, no `unwrap()` in library code, full lint coverage, MSRV pinned to 1.75, cross-OS CI, and `loom` model checks for the only double-checked-locking pattern in the crate.
+First stable release. Brings the dispatcher in line with the project's REPS engineering standards: typed listener errors, lock-free metrics on the dispatch hot path, no `unwrap()` in library code, full lint coverage, MSRV pinned to 1.75, cross-OS CI, and `loom` model checks for the only double-checked-locking pattern in the crate. See the full release notes in [`docs/release/v0.2.0.md`](docs/release/v0.2.0.md).
 
 ### Added
 - `REPS.md` — Rust Efficiency and Performance Standards. Defines the engineering rules every change in this crate is audited against (performance, concurrency, security, error handling, code quality, testing, documentation, dependency management, observability, CI/CD).

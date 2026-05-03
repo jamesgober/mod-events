@@ -1,17 +1,18 @@
 <div align="center">
-        <img width="120px" height="auto" src="https://raw.githubusercontent.com/jamesgober/jamesgober/main/media/icons/hexagon-3.svg" alt="Triple Hexagon">
+        <img width="99" alt="Rust logo" src="https://raw.githubusercontent.com/jamesgober/rust-collection/72baabd71f00e14aa9184efcb16fa3deddda3a0a/assets/rust-logo.svg">
     <h1>
-        <strong>Mod Events</strong>
+        <strong>MOD EVENTS</strong>
         <sup><br><sup>RUST EVENTS LIBRARY</sup><br></sup>
     </h1>
     <div>
+        <span>&nbsp;</span>
         <a href="https://crates.io/crates/mod-events" alt="Mod Events on Crates.io"><img alt="Crates.io" src="https://img.shields.io/crates/v/mod-events"></a>
         <span>&nbsp;</span>
         <a href="https://crates.io/crates/mod-events" alt="Download Mod Events"><img alt="Crates.io Downloads" src="https://img.shields.io/crates/d/mod-events?color=%230099ff"></a>
         <span>&nbsp;</span>
         <a href="https://docs.rs/mod-events" title="Mod Events Documentation"><img alt="docs.rs" src="https://img.shields.io/docsrs/mod-events"></a>
         <span>&nbsp;</span>
-        <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/jamesgober/mod-events?color=%23347d39" alt="last commit badge">
+        <a href="https://github.com/jamesgober/mod-events/actions/workflows/ci.yml" title="CI status"><img alt="CI" src="https://github.com/jamesgober/mod-events/actions/workflows/ci.yml/badge.svg?branch=main"></a>
     </div>
 </div>
 
@@ -60,7 +61,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mod-events = "0.2"
+mod-events = "0.2.1"
+
+# For async support (default)
+mod-events = { version = "0.2.1", features = ["async"] }
+
+# Sync-only build
+mod-events = { version = "0.2.1", default-features = false }
 ```
 
 MSRV: Rust 1.81.

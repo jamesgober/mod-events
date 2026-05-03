@@ -35,7 +35,7 @@ changes are concentrated in the listener-error type and the
 # Was:
 # mod-events = "0.1"
 # Now:
-mod-events = "0.2"
+mod-events = "0.2.1"
 ```
 
 `0.2.x` requires Rust **1.81** or newer (was 1.75 in `0.1.0-beta`).
