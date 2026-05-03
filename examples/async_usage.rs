@@ -1,4 +1,4 @@
-//! Async usage example for mod-events
+//! Async usage example for mod-events.
 
 #[cfg(feature = "async")]
 use mod_events::prelude::*;
@@ -21,47 +21,42 @@ impl Event for EmailEvent {
 #[cfg(feature = "async")]
 #[tokio::main]
 async fn main() {
-    println!("Mod Events - Async Usage Example");
+    println!("mod-events :: async usage example");
 
     let dispatcher = EventDispatcher::new();
 
-    // Async email sender - clone the data to avoid lifetime issues
-    dispatcher.subscribe_async(|event: &EmailEvent| {
+    // Async email sender — clone borrowed data so the future is `'static`.
+    let _sender_id = dispatcher.subscribe_async(|event: &EmailEvent| {
         let to = event.to.clone();
         let subject = event.subject.clone();
         let body = event.body.clone();
         async move {
-            println!("📧 Sending email to: {to}");
-            println!("    Subject: {subject}");
-            println!("    Body: {body}");
+            println!("sending email to: {to}");
+            println!("    subject: {subject}");
+            println!("    body: {body}");
 
-            // Simulate async email sending
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-            println!("✅ Email sent successfully!");
+            println!("email sent");
             Ok(())
         }
     });
 
-    // High priority async logger
-    dispatcher.subscribe_async_with_priority(
+    // High-priority async logger.
+    let _logger_id = dispatcher.subscribe_async_with_priority(
         |event: &EmailEvent| {
-            let to = event.to.clone(); // Clone to avoid lifetime issues
+            let to = event.to.clone();
             async move {
-                println!("📝 Logging email event for: {to}");
-
-                // Simulate async logging
+                println!("logging email event for: {to}");
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-                println!("✅ Email event logged!");
+                println!("email event logged");
                 Ok(())
             }
         },
         Priority::High,
     );
 
-    // Dispatch async events
-    println!("\n--- Dispatching Async Events ---");
+    println!("\n--- dispatching async events ---");
 
     let result = dispatcher
         .dispatch_async(EmailEvent {
@@ -72,14 +67,14 @@ async fn main() {
         .await;
 
     if result.all_succeeded() {
-        println!("✅ All async handlers completed successfully!");
+        println!("all async handlers completed successfully");
     }
 
-    println!("Event handled by {} listeners", result.success_count());
+    println!("event handled by {} listeners", result.success_count());
 }
 
 #[cfg(not(feature = "async"))]
 fn main() {
-    println!("This example requires the 'async' feature to be enabled.");
-    println!("Run with: cargo run --features async --example async_usage");
+    println!("this example requires the `async` feature to be enabled.");
+    println!("run with: cargo run --features async --example async_usage");
 }

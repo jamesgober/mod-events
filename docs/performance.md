@@ -162,11 +162,11 @@ Manual tests (debug mode):
 |---------|------------|---------------|----------------|---------|-------|
 | **Latency** | **262ns-1μs** | 1-10μs | 1-5μs | 2-5μs | 100-500μs |
 | **Throughput** | **3.8M/sec** | 100K-1M/sec | 1-5M/sec | 200K-500K/sec | 100K/sec |
-| **Type Safety** | ✅ Compile-time | ❌ Runtime | ❌ Runtime | ❌ Runtime | ❌ Runtime |
-| **Performance** | ✅ Zero-cost | ⚠️ Allocation overhead | ✅ Direct calls | ⚠️ V8 overhead | ⚠️ Network overhead |
-| **Async Support** | ✅ Native | ✅ Native | ❌ Manual | ✅ Native | ✅ Native |
-| **Priority System** | ✅ Built-in | ❌ Manual | ❌ Manual | ❌ Manual | ❌ Manual |
-| **Thread Safety** | ✅ Built-in | ✅ Built-in | ⚠️ Manual | ❌ Single-threaded | ✅ Built-in |
+| **Type Safety** | Compile-time | Runtime | Runtime | Runtime | Runtime |
+| **Performance** | Zero-cost | Allocation overhead | Direct calls | V8 overhead | Network overhead |
+| **Async Support** | Native | Native | Manual | Native | Native |
+| **Priority System** | Built-in | Manual | Manual | Manual | Manual |
+| **Thread Safety** | Built-in | Built-in | Manual | Single-threaded | Built-in |
 
 ## Real-World Performance
 

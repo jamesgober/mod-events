@@ -1,10 +1,11 @@
-//! Integration tests for mod-events
+//! Integration tests for mod-events.
+//!
+//! Test names follow the REPS convention `test_<subject>_<condition>_<expected>`.
 
 use mod_events::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-// Test events
 #[derive(Debug, Clone)]
 struct TestEvent {
     id: u64,
@@ -17,7 +18,6 @@ impl Event for TestEvent {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CounterEvent {
     value: i32,
@@ -29,13 +29,26 @@ impl Event for CounterEvent {
     }
 }
 
+#[derive(Debug, Clone)]
+struct UnusedEvent;
+
+impl Event for UnusedEvent {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Core dispatch behavior
+// ---------------------------------------------------------------------------
+
 #[test]
-fn test_basic_event_dispatch() {
+fn test_dispatch_with_subscribed_listener_invokes_handler_once() {
     let dispatcher = EventDispatcher::new();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
 
-    dispatcher.on(move |event: &TestEvent| {
+    let _id = dispatcher.on(move |event: &TestEvent| {
         assert_eq!(event.id, 123);
         assert_eq!(event.message, "test");
         counter_clone.fetch_add(1, Ordering::SeqCst);
@@ -53,25 +66,16 @@ fn test_basic_event_dispatch() {
 }
 
 #[test]
-fn test_multiple_listeners() {
+fn test_dispatch_with_multiple_listeners_invokes_each_once() {
     let dispatcher = EventDispatcher::new();
     let counter = Arc::new(AtomicUsize::new(0));
 
-    let counter1 = counter.clone();
-    let counter2 = counter.clone();
-    let counter3 = counter.clone();
-
-    dispatcher.on(move |_: &TestEvent| {
-        counter1.fetch_add(1, Ordering::SeqCst);
-    });
-
-    dispatcher.on(move |_: &TestEvent| {
-        counter2.fetch_add(1, Ordering::SeqCst);
-    });
-
-    dispatcher.on(move |_: &TestEvent| {
-        counter3.fetch_add(1, Ordering::SeqCst);
-    });
+    for _ in 0..3 {
+        let counter_clone = counter.clone();
+        let _id = dispatcher.on(move |_: &TestEvent| {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        });
+    }
 
     let result = dispatcher.dispatch(TestEvent {
         id: 1,
@@ -84,60 +88,78 @@ fn test_multiple_listeners() {
 }
 
 #[test]
-fn test_priority_ordering() {
+fn test_dispatch_with_mixed_priorities_executes_highest_first() {
     let dispatcher = EventDispatcher::new();
     let order = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-    let order1 = order.clone();
-    let order2 = order.clone();
-    let order3 = order.clone();
+    let order_low = order.clone();
+    let order_high = order.clone();
+    let order_normal = order.clone();
 
-    dispatcher.subscribe_with_priority(
+    let _l = dispatcher.subscribe_with_priority(
         move |_: &TestEvent| {
-            order1.lock().unwrap().push(1);
+            order_low.lock().unwrap().push(1);
             Ok(())
         },
         Priority::Low,
     );
-
-    dispatcher.subscribe_with_priority(
+    let _h = dispatcher.subscribe_with_priority(
         move |_: &TestEvent| {
-            order2.lock().unwrap().push(2);
+            order_high.lock().unwrap().push(2);
             Ok(())
         },
         Priority::High,
     );
-
-    dispatcher.subscribe_with_priority(
+    let _n = dispatcher.subscribe_with_priority(
         move |_: &TestEvent| {
-            order3.lock().unwrap().push(3);
+            order_normal.lock().unwrap().push(3);
             Ok(())
         },
         Priority::Normal,
     );
 
-    dispatcher.dispatch(TestEvent {
+    dispatcher.emit(TestEvent {
         id: 1,
         message: "priority".to_string(),
     });
 
-    let final_order = order.lock().unwrap();
-    assert_eq!(*final_order, vec![2, 3, 1]); // High, Normal, Low
+    assert_eq!(*order.lock().unwrap(), vec![2, 3, 1]);
 }
 
 #[test]
-fn test_error_handling() {
+fn test_dispatch_with_equal_priorities_preserves_registration_order() {
+    let dispatcher = EventDispatcher::new();
+    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    for i in 0..5 {
+        let order_clone = order.clone();
+        let _id = dispatcher.subscribe_with_priority(
+            move |_: &TestEvent| {
+                order_clone.lock().unwrap().push(i);
+                Ok(())
+            },
+            Priority::Normal,
+        );
+    }
+
+    dispatcher.emit(TestEvent {
+        id: 1,
+        message: "fifo".to_string(),
+    });
+
+    assert_eq!(*order.lock().unwrap(), vec![0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn test_dispatch_with_failing_listener_collects_error_without_stopping_dispatch() {
     let dispatcher = EventDispatcher::new();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
 
-    // Working listener
-    dispatcher.on(move |_: &TestEvent| {
+    let _ok = dispatcher.on(move |_: &TestEvent| {
         counter_clone.fetch_add(1, Ordering::SeqCst);
     });
-
-    // Failing listener
-    dispatcher.subscribe(|event: &TestEvent| {
+    let _err = dispatcher.subscribe(|event: &TestEvent| {
         if event.id == 999 {
             Err("Test error".into())
         } else {
@@ -145,35 +167,76 @@ fn test_error_handling() {
         }
     });
 
-    // Test success case
-    let result1 = dispatcher.dispatch(TestEvent {
+    let success = dispatcher.dispatch(TestEvent {
         id: 1,
         message: "success".to_string(),
     });
+    assert_eq!(success.success_count(), 2);
+    assert_eq!(success.error_count(), 0);
+    assert!(success.all_succeeded());
 
-    assert_eq!(result1.success_count(), 2);
-    assert_eq!(result1.error_count(), 0);
-    assert!(result1.all_succeeded());
-
-    // Test error case
-    let result2 = dispatcher.dispatch(TestEvent {
+    let failure = dispatcher.dispatch(TestEvent {
         id: 999,
         message: "error".to_string(),
     });
-
-    assert_eq!(result2.success_count(), 1);
-    assert_eq!(result2.error_count(), 1);
-    assert!(!result2.all_succeeded());
-    assert!(result2.has_errors());
+    assert_eq!(failure.success_count(), 1);
+    assert_eq!(failure.error_count(), 1);
+    assert!(!failure.all_succeeded());
+    assert!(failure.has_errors());
+    assert_eq!(failure.errors().len(), 1);
+    // Both listeners ran even though one returned `Err`.
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
 }
 
 #[test]
-fn test_middleware_filtering() {
+fn test_dispatch_with_no_listeners_returns_all_succeeded() {
+    let dispatcher = EventDispatcher::new();
+
+    let result = dispatcher.dispatch(UnusedEvent);
+
+    assert!(result.all_succeeded());
+    assert_eq!(result.success_count(), 0);
+    assert_eq!(result.error_count(), 0);
+    assert!(!result.is_blocked());
+    assert!(!result.has_errors());
+}
+
+#[test]
+fn test_dispatch_routes_event_to_matching_listener_type_only() {
+    let dispatcher = EventDispatcher::new();
+    let test_counter = Arc::new(AtomicUsize::new(0));
+    let counter_counter = Arc::new(AtomicUsize::new(0));
+
+    let test_clone = test_counter.clone();
+    let _ta = dispatcher.on(move |_: &TestEvent| {
+        test_clone.fetch_add(1, Ordering::SeqCst);
+    });
+    let counter_clone = counter_counter.clone();
+    let _ca = dispatcher.on(move |event: &CounterEvent| {
+        assert_eq!(event.value, 42);
+        counter_clone.fetch_add(1, Ordering::SeqCst);
+    });
+
+    dispatcher.emit(TestEvent {
+        id: 1,
+        message: "test".to_string(),
+    });
+    dispatcher.emit(CounterEvent { value: 42 });
+
+    assert_eq!(test_counter.load(Ordering::SeqCst), 1);
+    assert_eq!(counter_counter.load(Ordering::SeqCst), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Middleware behavior
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_dispatch_with_blocking_middleware_returns_blocked() {
     let dispatcher = EventDispatcher::new();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
 
-    // Add middleware that blocks events with id = 999
     dispatcher.add_middleware(|event: &dyn Event| {
         if let Some(test_event) = event.as_any().downcast_ref::<TestEvent>() {
             test_event.id != 999
@@ -182,110 +245,233 @@ fn test_middleware_filtering() {
         }
     });
 
-    dispatcher.on(move |_: &TestEvent| {
+    let _id = dispatcher.on(move |_: &TestEvent| {
         counter_clone.fetch_add(1, Ordering::SeqCst);
     });
 
-    // This should be blocked
-    let result1 = dispatcher.dispatch(TestEvent {
+    let blocked = dispatcher.dispatch(TestEvent {
         id: 999,
         message: "blocked".to_string(),
     });
-
-    // This should go through
-    let result2 = dispatcher.dispatch(TestEvent {
+    let allowed = dispatcher.dispatch(TestEvent {
         id: 1,
         message: "allowed".to_string(),
     });
 
-    assert!(result1.is_blocked());
-    assert!(result2.all_succeeded());
+    assert!(blocked.is_blocked());
+    assert!(!blocked.all_succeeded());
+    assert!(allowed.all_succeeded());
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn test_unsubscribe() {
+fn test_middleware_chain_executes_in_registration_order_and_short_circuits() {
+    let dispatcher = EventDispatcher::new();
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let calls_a = calls.clone();
+    dispatcher.add_middleware(move |_: &dyn Event| {
+        calls_a.lock().unwrap().push("a");
+        true
+    });
+
+    let calls_b = calls.clone();
+    dispatcher.add_middleware(move |_: &dyn Event| {
+        calls_b.lock().unwrap().push("b");
+        false // short-circuit
+    });
+
+    let calls_c = calls.clone();
+    dispatcher.add_middleware(move |_: &dyn Event| {
+        calls_c.lock().unwrap().push("c");
+        true
+    });
+
+    let result = dispatcher.dispatch(TestEvent {
+        id: 1,
+        message: "chain".to_string(),
+    });
+
+    assert!(result.is_blocked());
+    // `c` must NOT have run because `b` returned false.
+    assert_eq!(*calls.lock().unwrap(), vec!["a", "b"]);
+}
+
+// ---------------------------------------------------------------------------
+// Subscribe / unsubscribe / clear
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_unsubscribe_after_dispatch_stops_subsequent_invocation() {
     let dispatcher = EventDispatcher::new();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
 
-    let listener_id = dispatcher.on(move |_: &TestEvent| {
+    let id = dispatcher.on(move |_: &TestEvent| {
         counter_clone.fetch_add(1, Ordering::SeqCst);
     });
 
-    // Dispatch - should increment
-    dispatcher.dispatch(TestEvent {
+    dispatcher.emit(TestEvent {
         id: 1,
-        message: "test".to_string(),
+        message: "first".to_string(),
     });
-
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
-    // Unsubscribe
-    assert!(dispatcher.unsubscribe(listener_id));
+    assert!(dispatcher.unsubscribe(id));
 
-    // Dispatch again - should not increment
-    dispatcher.dispatch(TestEvent {
+    dispatcher.emit(TestEvent {
         id: 2,
-        message: "test2".to_string(),
+        message: "second".to_string(),
     });
-
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn test_listener_count() {
+fn test_unsubscribe_with_unknown_id_returns_false() {
+    let dispatcher = EventDispatcher::new();
+    let id = dispatcher.on(|_: &TestEvent| {});
+    assert!(dispatcher.unsubscribe(id));
+    // Same id removed twice — second call must be a no-op.
+    assert!(!dispatcher.unsubscribe(id));
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn test_unsubscribe_async_listener_removes_it() {
+    let dispatcher = EventDispatcher::new();
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+
+    let id = dispatcher.subscribe_async(move |_: &TestEvent| {
+        let counter = counter_clone.clone();
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
+
+    let _r1 = dispatcher
+        .dispatch_async(TestEvent {
+            id: 1,
+            message: "before".to_string(),
+        })
+        .await;
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    assert!(dispatcher.unsubscribe(id));
+
+    let _r2 = dispatcher
+        .dispatch_async(TestEvent {
+            id: 2,
+            message: "after".to_string(),
+        })
+        .await;
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn test_listener_count_reflects_register_and_remove() {
     let dispatcher = EventDispatcher::new();
 
     assert_eq!(dispatcher.listener_count::<TestEvent>(), 0);
 
     let _id1 = dispatcher.on(|_: &TestEvent| {});
-    assert_eq!(dispatcher.listener_count::<TestEvent>(), 1);
-
     let _id2 = dispatcher.on(|_: &TestEvent| {});
-    assert_eq!(dispatcher.listener_count::<TestEvent>(), 2);
-
     let id3 = dispatcher.on(|_: &TestEvent| {});
+
     assert_eq!(dispatcher.listener_count::<TestEvent>(), 3);
 
-    dispatcher.unsubscribe(id3);
+    assert!(dispatcher.unsubscribe(id3));
     assert_eq!(dispatcher.listener_count::<TestEvent>(), 2);
 }
 
 #[test]
-fn test_metrics() {
+fn test_clear_drops_all_listeners() {
     let dispatcher = EventDispatcher::new();
+    let _id1 = dispatcher.on(|_: &TestEvent| {});
+    let _id2 = dispatcher.on(|_: &TestEvent| {});
+    assert_eq!(dispatcher.listener_count::<TestEvent>(), 2);
 
-    dispatcher.on(|_: &TestEvent| {});
+    dispatcher.clear();
 
-    // Dispatch multiple times
+    assert_eq!(dispatcher.listener_count::<TestEvent>(), 0);
+}
+
+#[test]
+fn test_subscribe_64_listeners_all_invoked_in_priority_order() {
+    let dispatcher = EventDispatcher::new();
+    let invocations = Arc::new(AtomicUsize::new(0));
+
+    // 64 listeners: half High, half Low, registered High-then-Low. The
+    // dispatcher should invoke all 32 High listeners before any Low one.
+    for _ in 0..32 {
+        let invocations = invocations.clone();
+        let _id = dispatcher.subscribe_with_priority(
+            move |_: &TestEvent| {
+                let prior = invocations.fetch_add(1, Ordering::SeqCst);
+                assert!(prior < 32, "Low listener ran before all Highs");
+                Ok(())
+            },
+            Priority::High,
+        );
+    }
+    for _ in 0..32 {
+        let invocations = invocations.clone();
+        let _id = dispatcher.subscribe_with_priority(
+            move |_: &TestEvent| {
+                let prior = invocations.fetch_add(1, Ordering::SeqCst);
+                assert!(prior >= 32, "High listener ran out of order");
+                Ok(())
+            },
+            Priority::Low,
+        );
+    }
+
+    assert_eq!(dispatcher.listener_count::<TestEvent>(), 64);
+
+    let result = dispatcher.dispatch(TestEvent {
+        id: 1,
+        message: "stress".to_string(),
+    });
+
+    assert_eq!(result.success_count(), 64);
+    assert_eq!(invocations.load(Ordering::SeqCst), 64);
+}
+
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_metrics_record_dispatch_counts_per_event_type() {
+    let dispatcher = EventDispatcher::new();
+    let _id = dispatcher.on(|_: &TestEvent| {});
+
     for i in 0..5 {
-        dispatcher.dispatch(TestEvent {
+        dispatcher.emit(TestEvent {
             id: i,
             message: format!("test{i}"),
         });
     }
 
     let metrics = dispatcher.metrics();
-    let test_event_metrics = metrics.get(&std::any::TypeId::of::<TestEvent>()).unwrap();
-    assert_eq!(test_event_metrics.dispatch_count, 5);
-    assert_eq!(
-        test_event_metrics.event_name,
-        "integration_tests::TestEvent"
-    );
+    let meta = metrics.get(&std::any::TypeId::of::<TestEvent>()).unwrap();
+    assert_eq!(meta.dispatch_count, 5);
+    assert_eq!(meta.event_name, "integration_tests::TestEvent");
+    assert_eq!(meta.listener_count, 1);
 }
 
 #[test]
-fn test_fire_and_forget() {
+fn test_emit_invokes_listener_without_returning_result() {
     let dispatcher = EventDispatcher::new();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
 
-    dispatcher.on(move |_: &TestEvent| {
+    let _id = dispatcher.on(move |_: &TestEvent| {
         counter_clone.fetch_add(1, Ordering::SeqCst);
     });
 
-    // emit() should dispatch the event but not return a result
+    // emit() returns ()
     dispatcher.emit(TestEvent {
         id: 1,
         message: "fire and forget".to_string(),
@@ -294,59 +480,21 @@ fn test_fire_and_forget() {
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn test_different_event_types() {
-    let dispatcher = EventDispatcher::new();
-    let test_counter = Arc::new(AtomicUsize::new(0));
-    let counter_counter = Arc::new(AtomicUsize::new(0));
-
-    let test_counter_clone = test_counter.clone();
-    let counter_counter_clone = counter_counter.clone();
-
-    dispatcher.on(move |_: &TestEvent| {
-        test_counter_clone.fetch_add(1, Ordering::SeqCst);
-    });
-
-    dispatcher.on(move |_: &CounterEvent| {
-        counter_counter_clone.fetch_add(1, Ordering::SeqCst);
-    });
-
-    dispatcher.emit(TestEvent {
-        id: 1,
-        message: "test".to_string(),
-    });
-
-    dispatcher.emit(CounterEvent { value: 42 });
-
-    assert_eq!(test_counter.load(Ordering::SeqCst), 1);
-    assert_eq!(counter_counter.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn test_clear() {
-    let dispatcher = EventDispatcher::new();
-
-    dispatcher.on(|_: &TestEvent| {});
-    dispatcher.on(|_: &TestEvent| {});
-
-    assert_eq!(dispatcher.listener_count::<TestEvent>(), 2);
-
-    dispatcher.clear();
-
-    assert_eq!(dispatcher.listener_count::<TestEvent>(), 0);
-}
+// ---------------------------------------------------------------------------
+// Async tests
+// ---------------------------------------------------------------------------
 
 #[cfg(feature = "async")]
 mod async_tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_async_dispatch() {
+    async fn test_dispatch_async_awaits_subscribed_async_listener() {
         let dispatcher = EventDispatcher::new();
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
-        dispatcher.subscribe_async(move |_: &TestEvent| {
+        let _id = dispatcher.subscribe_async(move |_: &TestEvent| {
             let counter = counter_clone.clone();
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
@@ -367,16 +515,16 @@ mod async_tests {
     }
 
     #[tokio::test]
-    async fn test_async_priority() {
+    async fn test_dispatch_async_executes_high_priority_listener_first() {
         let dispatcher = EventDispatcher::new();
         let order = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        let order1 = order.clone();
-        let order2 = order.clone();
+        let order_low = order.clone();
+        let order_high = order.clone();
 
-        dispatcher.subscribe_async_with_priority(
+        let _low = dispatcher.subscribe_async_with_priority(
             move |_: &TestEvent| {
-                let order = order1.clone();
+                let order = order_low.clone();
                 async move {
                     order.lock().unwrap().push(1);
                     Ok(())
@@ -385,9 +533,9 @@ mod async_tests {
             Priority::Low,
         );
 
-        dispatcher.subscribe_async_with_priority(
+        let _high = dispatcher.subscribe_async_with_priority(
             move |_: &TestEvent| {
-                let order = order2.clone();
+                let order = order_high.clone();
                 async move {
                     order.lock().unwrap().push(2);
                     Ok(())
@@ -396,14 +544,13 @@ mod async_tests {
             Priority::High,
         );
 
-        dispatcher
+        let _result = dispatcher
             .dispatch_async(TestEvent {
                 id: 1,
                 message: "async priority".to_string(),
             })
             .await;
 
-        let final_order = order.lock().unwrap();
-        assert_eq!(*final_order, vec![2, 1]); // High, Low
+        assert_eq!(*order.lock().unwrap(), vec![2, 1]);
     }
 }

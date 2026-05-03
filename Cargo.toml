@@ -1,14 +1,21 @@
 # ¸_____¸_____¸  
 #  ╲__¸ ┊ ¸__╱   
 # ¸_  ┊ ┊ ┊ ___  James Gober
-# ┊ [_┊ ┊ ┊_] ┊  Contact@JamesGober.com
+# ┊ [_┊ ┊ ┊_] ┊  me@JamesGober.com
 # ┊_____A_____┊  https://JamesGober.com
 # JAMES ⬡ GOBER   
 # ===================================================
 [package]
 name = "mod-events"
-version = "0.1.0"
+# Released 2026-05-03. Bump from `0.1.0-beta` to `0.2.0` reflects the
+# breaking API changes listed under [0.2.0] in CHANGELOG.md (Box<dyn
+# Error> → `ListenerError`, `EventMetadata::dispatch_count` u64,
+# atomic-metrics rework, removed unsafe impls). REPS §Versioning: a
+# breaking change in any library crate MUST result in a MAJOR-position
+# bump; for 0.x crates the convention is to bump MINOR.
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.75"
 readme = "README.md"
 license = "Apache-2.0"
 
@@ -19,7 +26,7 @@ description = "A high-performance, zero-overhead event dispatcher library for Ru
 keywords = ["events", "dispatcher", "async", "performance", "observer"]
 categories = ["concurrency", "asynchronous", "data-structures"]
 
-authors = ["James Gober <contact@jamesgober.com>"]
+authors = ["James Gober <me@jamesgober.com>"]
 
 
 #####################################################
@@ -28,6 +35,15 @@ authors = ["James Gober <contact@jamesgober.com>"]
 [features]
 default = ["async"]
 async = ["tokio"]
+
+
+#####################################################
+# LINTS
+#####################################################
+[lints.rust]
+# `--cfg loom` activates `tests/loom_concurrent.rs`. Declared here so
+# `cargo clippy --all-targets` does not flag the cfg gate as unknown.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 
 #####################################################
@@ -41,13 +57,45 @@ harness = false
 # DEPENDENCIES
 #####################################################
 [dependencies]
-thiserror = "1.0.56"
-tokio = { version = "1.0", features = ["full"], optional = true }
+# why: provides RwLock and Mutex without lock poisoning. Used for the
+# dispatcher's listener registry, middleware chain, and per-event-type
+# `Mutex<Instant>` last-dispatch timestamp. Critical hot-path dependency
+# — REPS §Dependency Management requires exact pins for critical crates,
+# so this is `=0.12.4` rather than a caret range.
+parking_lot = "=0.12.4"
+
+# why: only used to wire the `async` cargo feature; the library code
+# itself does not import tokio and depends only on `std::future` /
+# `std::pin`. The `sync` feature is the minimum that keeps the optional
+# dependency resolvable. The runtime needed by examples and tests lives
+# under [dev-dependencies] below. Caret-pinned to the 1.x major because
+# the library only depends on the cargo feature wiring, not on any
+# specific tokio API. Roadmap item #11 tracks removing this entry
+# entirely.
+tokio = { version = "1", default-features = false, features = ["sync"], optional = true }
 
 
 #####################################################
 # DEV DEPENDENCIES
 #####################################################
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }
+# why: examples and integration tests that exercise the async path need
+# the macros (`#[tokio::main]`, `#[tokio::test]`), the multi-threaded
+# runtime, and `tokio::time::sleep`. `full` is acceptable in the dev
+# profile because dev-dependencies are not propagated to consumers. Wide
+# caret range (`1`) is fine here for the same reason.
+tokio = { version = "1", features = ["full"] }
+
+# why: criterion drives `benches/dispatch_benchmark.rs`. Required by REPS
+# §Testing for performance-sensitive code paths. Dev-only, so a caret on
+# the minor version is acceptable.
 criterion = "0.5"
+
+# why: model-checks the dispatcher's double-checked-locking pattern in
+# `tests/loom_concurrent.rs`. The actual dispatcher uses
+# `parking_lot::RwLock`, which loom does not natively model; the loom
+# test reproduces the *algorithm* on `loom::sync::RwLock` so that
+# exhaustive interleaving exploration covers it. Loom test only compiles
+# under `RUSTFLAGS="--cfg loom"`, so the dep does not impact ordinary
+# builds.
+loom = "0.7"

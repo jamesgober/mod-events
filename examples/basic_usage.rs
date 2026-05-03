@@ -1,13 +1,11 @@
-//! Basic usage example for mod-events
+//! Basic usage example for mod-events.
 
 use mod_events::prelude::*;
 
-// Define your events
 #[derive(Debug, Clone)]
 struct UserRegistered {
     user_id: u64,
     email: String,
-    _timestamp: u64,
 }
 
 impl Event for UserRegistered {
@@ -19,7 +17,6 @@ impl Event for UserRegistered {
 #[derive(Debug, Clone)]
 struct OrderPlaced {
     order_id: u64,
-    _user_id: u64,
     amount: f64,
     items: Vec<String>,
 }
@@ -31,65 +28,63 @@ impl Event for OrderPlaced {
 }
 
 fn main() {
-    println!("Mod Events - Basic Usage Example");
+    println!("mod-events :: basic usage example");
 
     let dispatcher = EventDispatcher::new();
 
-    // Subscribe to user registration events
-    dispatcher.on(|event: &UserRegistered| {
-        println!("📧 Welcome email queued for {}", event.email);
+    // Subscribe to user-registration events.
+    let _welcome_id = dispatcher.on(|event: &UserRegistered| {
+        println!("welcome email queued for {}", event.email);
     });
 
-    dispatcher.subscribe_with_priority(
+    let _high_priority_id = dispatcher.subscribe_with_priority(
         |event: &UserRegistered| {
-            println!("🔔 High priority: New user {} registered", event.user_id);
+            println!("high priority: new user {} registered", event.user_id);
             Ok(())
         },
         Priority::High,
     );
 
-    // Subscribe to order events
-    dispatcher.on(|event: &OrderPlaced| {
+    // Subscribe to order events.
+    let _order_id = dispatcher.on(|event: &OrderPlaced| {
         println!(
-            "📦 Processing order {} for ${:.2}",
+            "processing order {} for ${:.2}",
             event.order_id, event.amount
         );
-        println!("    Items: {:?}", event.items);
+        println!("    items: {:?}", event.items);
     });
 
-    // Add middleware for logging
+    // Add middleware for logging.
     dispatcher.add_middleware(|event: &dyn Event| {
-        println!("🔍 Event: {}", event.event_name());
-        true // Allow all events
+        println!("event: {}", event.event_name());
+        true
     });
 
-    // Dispatch some events
-    println!("\n--- Dispatching Events ---");
+    // Dispatch some events.
+    println!("\n--- dispatching events ---");
 
     dispatcher.emit(UserRegistered {
         user_id: 123,
         email: "alice@example.com".to_string(),
-        _timestamp: 1634567890,
     });
 
     dispatcher.emit(OrderPlaced {
         order_id: 456,
-        _user_id: 123,
         amount: 99.99,
         items: vec!["Laptop".to_string(), "Mouse".to_string()],
     });
 
-    // Show metrics
-    println!("\n--- Metrics ---");
+    // Show metrics.
+    println!("\n--- metrics ---");
     let metrics = dispatcher.metrics();
-    for (_, meta) in metrics {
+    for meta in metrics.values() {
         println!(
-            "Event: {} - Dispatched: {} times",
+            "event: {} - dispatched: {} times",
             meta.event_name, meta.dispatch_count
         );
     }
 
-    println!("\n--- Listener Counts ---");
+    println!("\n--- listener counts ---");
     println!(
         "UserRegistered: {}",
         dispatcher.listener_count::<UserRegistered>()

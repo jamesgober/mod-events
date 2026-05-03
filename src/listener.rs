@@ -1,6 +1,6 @@
 //! Event listener traits and implementations
 
-use crate::{Event, Priority};
+use crate::{Event, ListenerError, Priority};
 
 /// Trait for synchronous event listeners
 ///
@@ -11,7 +11,7 @@ use crate::{Event, Priority};
 /// # Example
 ///
 /// ```rust
-/// use mod_events::{Event, EventListener, Priority};
+/// use mod_events::{Event, EventListener, ListenerError, Priority};
 ///
 /// #[derive(Debug, Clone)]
 /// struct UserRegistered {
@@ -28,23 +28,24 @@ use crate::{Event, Priority};
 /// struct EmailNotifier;
 ///
 /// impl EventListener<UserRegistered> for EmailNotifier {
-///     fn handle(&self, event: &UserRegistered) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///     fn handle(&self, event: &UserRegistered) -> Result<(), ListenerError> {
 ///         // Send email logic here
 ///         println!("Sending email to {}", event.email);
 ///         Ok(())
 ///     }
-///     
+///
 ///     fn priority(&self) -> Priority {
 ///         Priority::High
 ///     }
 /// }
 /// ```
 pub trait EventListener<T: Event>: Send + Sync {
-    /// Handle the event
+    /// Handle the event.
     ///
     /// This method is called when the event is dispatched.
-    /// Return `Ok(())` on success or an error on failure.
-    fn handle(&self, event: &T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    /// Return `Ok(())` on success, or wrap any error in [`ListenerError`]
+    /// on failure. `&str` and `String` convert directly via `Into`.
+    fn handle(&self, event: &T) -> Result<(), ListenerError>;
 
     /// Get the priority of this listener
     ///
@@ -56,8 +57,7 @@ pub trait EventListener<T: Event>: Send + Sync {
 }
 
 /// Internal listener wrapper for type erasure
-type ListenerHandler =
-    dyn Fn(&dyn Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> + Send + Sync;
+type ListenerHandler = dyn Fn(&dyn Event) -> Result<(), ListenerError> + Send + Sync;
 
 pub(crate) struct ListenerWrapper {
     pub(crate) handler: Box<ListenerHandler>,
@@ -79,7 +79,7 @@ impl ListenerWrapper {
     pub(crate) fn new<T, F>(listener: F, priority: Priority, id: usize) -> Self
     where
         T: Event + 'static,
-        F: Fn(&T) -> Result<(), Box<dyn std::error::Error + Send + Sync>> + Send + Sync + 'static,
+        F: Fn(&T) -> Result<(), ListenerError> + Send + Sync + 'static,
     {
         Self {
             handler: Box::new(move |event: &dyn Event| {

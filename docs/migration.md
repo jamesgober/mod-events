@@ -861,7 +861,7 @@ struct UserRegistered {
 4. **Scale**: Add more event types and handlers
 5. **Optimize**: Use performance guide for optimization
 
-Welcome to mod-events! 🚀
+Welcome to mod-events.
 
 <br>
 

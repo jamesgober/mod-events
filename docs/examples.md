@@ -5,7 +5,7 @@
     <sup><br><sup>USAGE &amp; EXAMPLES</sup></sup>
 </h1>
 
-Comprehensive examples showing different use cases and patterns with mod-events.
+End-to-end examples showing different use cases and patterns with mod-events.
 
 ## Basic Examples
 
@@ -149,20 +149,20 @@ fn validate_order(order: &OrderPlaced) -> Result<(), Box<dyn std::error::Error +
 
 fn update_inventory(items: &[String]) {
     for item in items {
-        println!("📦 Updating inventory for: {}", item);
+        println!("updating inventory for: {}", item);
     }
 }
 
 fn send_order_confirmation(user_id: u64, order_id: u64) {
-    println!("📧 Sending order confirmation to user {} for order {}", user_id, order_id);
+    println!("sending order confirmation to user {} for order {}", user_id, order_id);
 }
 
 fn update_order_status(order_id: u64, status: &str) {
-    println!("📋 Order {} status updated to: {}", order_id, status);
+    println!("order {} status updated to: {}", order_id, status);
 }
 
 fn trigger_fulfillment(order_id: u64) {
-    println!("🚚 Triggering fulfillment for order {}", order_id);
+    println!("triggering fulfillment for order {}", order_id);
 }
 ```
 
@@ -229,17 +229,17 @@ impl GameSystem {
         dispatcher.subscribe_with_priority(move |event: &PlayerMoved| {
             let mut positions = positions.lock().unwrap();
             positions.insert(event.player_id, (event.x, event.y));
-            println!("🎮 Player {} moved to ({}, {})", event.player_id, event.x, event.y);
+            println!("player {} moved to ({}, {})", event.player_id, event.x, event.y);
             Ok(())
         }, Priority::High);
         
         // Normal priority - handle player death
         dispatcher.on(|event: &PlayerDied| {
             if let Some(killer_id) = event.killer_id {
-                println!("💀 Player {} was killed by player {} at ({}, {})", 
+                println!("player {} was killed by player {} at ({}, {})", 
                     event.player_id, killer_id, event.position.0, event.position.1);
             } else {
-                println!("💀 Player {} died at ({}, {})", 
+                println!("player {} died at ({}, {})", 
                     event.player_id, event.position.0, event.position.1);
             }
         });
@@ -253,7 +253,7 @@ impl GameSystem {
         // Frame update handling
         dispatcher.on(|event: &GameFrameUpdate| {
             if event.frame_number % 60 == 0 {
-                println!("🎯 Frame {} - Delta: {:.2}ms", event.frame_number, event.delta_time * 1000.0);
+                println!("frame {} - delta: {:.2}ms", event.frame_number, event.delta_time * 1000.0);
             }
         });
         
@@ -298,7 +298,7 @@ impl GameSystem {
 
 fn record_player_movement(player_id: u64, x: f32, y: f32) {
     // Analytics recording
-    println!("📊 Analytics: Player {} at ({:.2}, {:.2})", player_id, x, y);
+    println!("analytics: player {} at ({:.2}, {:.2})", player_id, x, y);
 }
 
 fn main() {
@@ -353,32 +353,32 @@ impl MicroservicesBus {
         // Service orchestration
         dispatcher.subscribe_with_priority(|event: &UserRegistered| {
             // User service acknowledges
-            println!("👤 User Service: User {} registered", event.user_id);
+            println!("user service: user {} registered", event.user_id);
             Ok(())
         }, Priority::Critical);
         
         dispatcher.on(|event: &UserRegistered| {
             // Email service
-            println!("📧 Email Service: Sending welcome email to {}", event.email);
+            println!("email service: sending welcome email to {}", event.email);
         });
         
-        dispatcher.on(|event: &UserRegistered| {
+        dispatcher.on(|_event: &UserRegistered| {
             // Analytics service
-            println!("📊 Analytics Service: Recording user registration");
+            println!("analytics service: recording user registration");
         });
         
         dispatcher.on(|event: &UserRegistered| {
             // Notification service
-            println!("🔔 Notification Service: User {} joined from {}", event.user_id, event.service);
+            println!("notification service: user {} joined from {}", event.user_id, event.service);
         });
         
         // Health check monitoring
         dispatcher.on(|event: &ServiceHealthCheck| {
             match event.status.as_str() {
-                "healthy" => println!("✅ {} is healthy", event.service_name),
-                "degraded" => println!("⚠️  {} is degraded", event.service_name),
-                "down" => println!("❌ {} is down!", event.service_name),
-                _ => println!("❓ {} status unknown", event.service_name),
+                "healthy" => println!("{} is healthy", event.service_name),
+                "degraded" => println!("{} is degraded", event.service_name),
+                "down" => println!("{} is down", event.service_name),
+                _ => println!("{} status unknown", event.service_name),
             }
         });
         
@@ -386,7 +386,7 @@ impl MicroservicesBus {
         let counter = event_counter.clone();
         dispatcher.add_middleware(move |event: &dyn Event| {
             counter.fetch_add(1, Ordering::Relaxed);
-            println!("📈 Event #{}: {}", counter.load(Ordering::Relaxed), event.event_name());
+            println!("event #{}: {}", counter.load(Ordering::Relaxed), event.event_name());
             true
         });
         
@@ -397,7 +397,7 @@ impl MicroservicesBus {
     }
     
     fn simulate_microservices(&self) {
-        println!("🚀 Starting microservices simulation...\n");
+        println!("starting microservices simulation...\n");
         
         // Simulate user registrations
         for i in 1..=5 {
@@ -409,7 +409,7 @@ impl MicroservicesBus {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         
-        println!("\n🏥 Running health checks...\n");
+        println!("\nrunning health checks...\n");
         
         // Simulate health checks
         let services = vec![
@@ -428,7 +428,7 @@ impl MicroservicesBus {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         
-        println!("\n📊 Total events processed: {}", self.event_counter.load(Ordering::Relaxed));
+        println!("\ntotal events processed: {}", self.event_counter.load(Ordering::Relaxed));
     }
 }
 
@@ -491,16 +491,16 @@ mod async_web_example {
             // High priority - authentication
             dispatcher.subscribe_async_with_priority(|event: &HttpRequest| async {
                 if event.user_id.is_some() {
-                    println!("🔐 Auth: User {} authenticated", event.user_id.unwrap());
+                    println!("auth: user {} authenticated", event.user_id.unwrap());
                 } else {
-                    println!("🔐 Auth: Anonymous request");
+                    println!("auth: anonymous request");
                 }
                 Ok(())
             }, Priority::High);
             
             // Normal priority - request logging
             dispatcher.subscribe_async(|event: &HttpRequest| async {
-                println!("📝 Logger: {} {} - User: {:?}", 
+                println!("logger: {} {} - user: {:?}", 
                     event.method, event.path, event.user_id);
                 sleep(Duration::from_millis(10)).await; // Simulate async I/O
                 Ok(())
@@ -508,7 +508,7 @@ mod async_web_example {
             
             // Normal priority - analytics
             dispatcher.subscribe_async(|event: &HttpRequest| async {
-                println!("📊 Analytics: Recording {} request to {}", 
+                println!("analytics: recording {} request to {}", 
                     event.method, event.path);
                 sleep(Duration::from_millis(5)).await; // Simulate async I/O
                 Ok(())
@@ -517,10 +517,10 @@ mod async_web_example {
             // Database query monitoring
             dispatcher.subscribe_async(|event: &DatabaseQuery| async {
                 if event.duration_ms > 1000 {
-                    println!("⚠️  Slow query detected: {} ({}ms)", 
+                    println!("slow query detected: {} ({}ms)", 
                         event.query, event.duration_ms);
                 } else {
-                    println!("✅ Query completed: {} ({}ms)", 
+                    println!("query completed: {} ({}ms)", 
                         event.query, event.duration_ms);
                 }
                 Ok(())
@@ -541,9 +541,9 @@ mod async_web_example {
             let result = self.dispatcher.dispatch_async(request).await;
             
             if result.all_succeeded() {
-                println!("✅ Request processed successfully");
+                println!("request processed successfully");
             } else {
-                println!("❌ Some handlers failed: {} errors", result.error_count());
+                println!("some handlers failed: {} errors", result.error_count());
             }
             
             // Simulate database query
@@ -558,7 +558,7 @@ mod async_web_example {
         }
         
         async fn simulate_web_traffic(&self) {
-            println!("🌐 Starting web server simulation...\n");
+            println!("starting web server simulation...\n");
             
             let requests = vec![
                 ("GET", "/", None),
@@ -570,7 +570,7 @@ mod async_web_example {
             ];
             
             for (method, path, user_id) in requests {
-                println!("\n🔄 Processing {} {}", method, path);
+                println!("\nprocessing {} {}", method, path);
                 self.handle_request(method, path, user_id).await;
                 sleep(Duration::from_millis(200)).await;
             }
@@ -647,7 +647,7 @@ impl PerformanceTester {
     }
     
     fn run_benchmark(&self, event_count: usize) {
-        println!("🚀 Running performance benchmark with {} events", event_count);
+        println!("running performance benchmark with {} events", event_count);
         
         let start = Instant::now();
         
@@ -662,7 +662,7 @@ impl PerformanceTester {
         let events_per_second = event_count as f64 / duration.as_secs_f64();
         let handler_calls = self.counter.load(Ordering::Relaxed);
         
-        println!("📊 Performance Results:");
+        println!("performance results:");
         println!("  Events: {}", event_count);
         println!("  Duration: {:?}", duration);
         println!("  Events/sec: {:.0}", events_per_second);
@@ -814,44 +814,44 @@ fn setup_cqrs(dispatcher: &EventDispatcher) {
 ```rust
 // Common helper functions used in examples
 fn process_payment(data: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("💳 Processing payment: {:?}", data);
+    println!("processing payment: {:?}", data);
     Ok(())
 }
 
 fn send_notification(data: &serde_json::Value) {
-    println!("📬 Sending notification: {:?}", data);
+    println!("sending notification: {:?}", data);
 }
 
 fn store_event_in_database(event: &DomainEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("💾 Storing event: {} v{}", event.event_type, event.version);
+    println!("storing event: {} v{}", event.event_type, event.version);
     Ok(())
 }
 
 fn update_read_models(event: &DomainEvent) {
-    println!("🔄 Updating read models for: {}", event.event_type);
+    println!("updating read models for: {}", event.event_type);
 }
 
 fn trigger_side_effects(event: &DomainEvent) {
-    println!("⚡ Triggering side effects for: {}", event.event_type);
+    println!("triggering side effects for: {}", event.event_type);
 }
 
 fn handle_create_user(payload: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("👤 Creating user: {:?}", payload);
+    println!("creating user: {:?}", payload);
     Ok(())
 }
 
 fn handle_update_user(payload: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("📝 Updating user: {:?}", payload);
+    println!("updating user: {:?}", payload);
     Ok(())
 }
 
 fn handle_get_user(params: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("🔍 Getting user: {:?}", params);
+    println!("getting user: {:?}", params);
     Ok(())
 }
 
 fn handle_list_users(params: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("📋 Listing users: {:?}", params);
+    println!("listing users: {:?}", params);
     Ok(())
 }
 ```

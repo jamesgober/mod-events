@@ -1,0 +1,57 @@
+# cargo-deny configuration — REPS §Dependency Management.
+#
+# Resolves to a single failing exit code if the dependency tree has known
+# CVEs, banned crates, license violations, or comes from an unapproved
+# source. Run locally with `cargo deny check`; CI runs the same.
+
+[graph]
+all-features = true
+
+# ---------------------------------------------------------------------------
+# Vulnerability advisories (RustSec database)
+# ---------------------------------------------------------------------------
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+# ---------------------------------------------------------------------------
+# License policy — only allow OSI-approved permissive licenses that are
+# compatible with Apache-2.0 (the crate's own license).
+# ---------------------------------------------------------------------------
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+# ---------------------------------------------------------------------------
+# Dependency bans — wildcards are forbidden (REPS §Dependency Management
+# anti-pattern: overly loose version constraints). Multiple-version
+# warnings highlight transitive dep duplication.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# Source policy — only allow crates.io and well-known forges.
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

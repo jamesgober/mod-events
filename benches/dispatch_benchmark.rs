@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 struct BenchEvent {
-    _id: u64,
-    _data: String,
+    id: u64,
+    data: String,
 }
 
 impl Event for BenchEvent {
@@ -20,15 +20,18 @@ fn bench_single_listener(c: &mut Criterion) {
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
 
-    dispatcher.on(move |_: &BenchEvent| {
+    let _id = dispatcher.on(move |event: &BenchEvent| {
+        // Touch the fields so they cannot be optimized away.
+        let _ = black_box(event.id);
+        let _ = black_box(event.data.len());
         counter_clone.fetch_add(1, Ordering::Relaxed);
     });
 
     c.bench_function("single_listener", |b| {
         b.iter(|| {
             dispatcher.emit(black_box(BenchEvent {
-                _id: 1,
-                _data: "benchmark".to_string(),
+                id: 1,
+                data: "benchmark".to_string(),
             }));
         })
     });
@@ -38,10 +41,12 @@ fn bench_multiple_listeners(c: &mut Criterion) {
     let dispatcher = EventDispatcher::new();
     let counter = Arc::new(AtomicUsize::new(0));
 
-    // Add 10 listeners
+    // Register ten listeners; each touches the event payload.
     for _ in 0..10 {
         let counter_clone = counter.clone();
-        dispatcher.on(move |_: &BenchEvent| {
+        let _id = dispatcher.on(move |event: &BenchEvent| {
+            let _ = black_box(event.id);
+            let _ = black_box(event.data.len());
             counter_clone.fetch_add(1, Ordering::Relaxed);
         });
     }
@@ -49,8 +54,8 @@ fn bench_multiple_listeners(c: &mut Criterion) {
     c.bench_function("multiple_listeners", |b| {
         b.iter(|| {
             dispatcher.emit(black_box(BenchEvent {
-                _id: 1,
-                _data: "benchmark".to_string(),
+                id: 1,
+                data: "benchmark".to_string(),
             }));
         })
     });

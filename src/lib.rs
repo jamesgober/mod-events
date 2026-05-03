@@ -4,12 +4,13 @@
 //!
 //! ## Features
 //!
-//! - **Zero-cost abstractions**: No runtime overhead for event dispatch
-//! - **Type-safe**: Compile-time guarantees for event handling
-//! - **Thread-safe**: Built for concurrent applications
-//! - **Async support**: Full async/await compatibility (with "async" feature)
-//! - **Flexible**: Support for sync, async, and priority-based listeners
-//! - **Easy to use**: Simple API and intuitive methods
+//! - Zero-cost abstractions: no runtime overhead for event dispatch.
+//! - Type-safe: compile-time guarantees for event handling.
+//! - Thread-safe: built for concurrent applications.
+//! - Async support: full `async`/`.await` compatibility (with the `async`
+//!   feature).
+//! - Flexible: sync, async, and priority-based listeners.
+//! - Simple API.
 //!
 //! ## Quick Start
 //!
@@ -41,8 +42,26 @@
 //!     email: "alice@example.com".to_string(),
 //! });
 //! ```
+
+#![deny(warnings)]
+#![deny(missing_docs)]
+#![deny(unsafe_op_in_unsafe_fn)]
+#![deny(unused_must_use)]
+#![deny(unused_results)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+#![deny(clippy::todo)]
+#![deny(clippy::unimplemented)]
+#![deny(clippy::print_stdout)]
+#![deny(clippy::print_stderr)]
+#![deny(clippy::dbg_macro)]
+#![deny(clippy::unreachable)]
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![deny(clippy::missing_safety_doc)]
+
 mod core;
 mod dispatcher;
+mod error;
 mod listener;
 mod metrics;
 mod middleware;
@@ -54,6 +73,7 @@ mod async_support;
 
 pub use core::*;
 pub use dispatcher::*;
+pub use error::*;
 pub use listener::*;
 pub use metrics::*;
 pub use middleware::*;
@@ -65,7 +85,7 @@ pub use async_support::*;
 
 /// Convenience re-exports
 pub mod prelude {
-    pub use crate::{Event, EventDispatcher, Priority};
+    pub use crate::{Event, EventDispatcher, ListenerError, Priority};
 
     #[cfg(feature = "async")]
     pub use crate::AsyncEventListener;

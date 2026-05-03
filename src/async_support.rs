@@ -1,22 +1,24 @@
 //! Async event support (requires "async" feature)
 
-use crate::{Event, Priority};
+use crate::{Event, ListenerError, Priority};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// Trait for asynchronous event listeners
+/// Pinned future returned by an async listener.
+pub type AsyncEventResult<'a> =
+    Pin<Box<dyn Future<Output = Result<(), ListenerError>> + Send + 'a>>;
+
+/// Trait for asynchronous event listeners.
 ///
-/// This trait is only available when the "async" feature is enabled.
+/// This trait is only available when the `async` feature is enabled.
 ///
 /// # Example
 ///
 /// ```rust
 /// # #[cfg(feature = "async")]
 /// # {
-/// use mod_events::{AsyncEventListener, Priority, Event};
-/// use std::future::Future;
-/// use std::pin::Pin;
+/// use mod_events::{AsyncEventListener, AsyncEventResult, Event, ListenerError, Priority};
 ///
 /// #[derive(Debug, Clone)]
 /// struct UserRegistered {
@@ -33,9 +35,8 @@ use std::sync::Arc;
 /// struct AsyncEmailNotifier;
 ///
 /// impl AsyncEventListener<UserRegistered> for AsyncEmailNotifier {
-///     fn handle<'a>(&'a self, event: &'a UserRegistered) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>> {
+///     fn handle<'a>(&'a self, event: &'a UserRegistered) -> AsyncEventResult<'a> {
 ///         Box::pin(async move {
-///             // Async email sending logic
 ///             println!("Async email sent to {}", event.email);
 ///             Ok(())
 ///         })
@@ -43,27 +44,21 @@ use std::sync::Arc;
 /// }
 /// # }
 /// ```
-pub type AsyncEventResult<'a> =
-    Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
-
 pub trait AsyncEventListener<T: Event>: Send + Sync {
-    /// Handle the event asynchronously
+    /// Handle the event asynchronously.
     fn handle<'a>(&'a self, event: &'a T) -> AsyncEventResult<'a>;
 
-    /// Get the priority of this listener
+    /// Get the priority of this listener.
+    ///
+    /// Higher priority listeners are executed first. Default is
+    /// [`Priority::Normal`].
     fn priority(&self) -> Priority {
         Priority::Normal
     }
 }
 
-/// Internal async listener wrapper
-/// Type alias for the async event handler function
-type AsyncEventHandler = dyn for<'a> Fn(
-        &'a dyn Event,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
-    > + Send
-    + Sync;
+/// Internal async listener wrapper.
+type AsyncEventHandler = dyn for<'a> Fn(&'a dyn Event) -> AsyncEventResult<'a> + Send + Sync;
 
 pub(crate) struct AsyncListenerWrapper {
     pub(crate) handler: Arc<AsyncEventHandler>,
@@ -86,7 +81,7 @@ impl AsyncListenerWrapper {
     where
         T: Event + 'static,
         F: Fn(&T) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
+        Fut: Future<Output = Result<(), ListenerError>> + Send + 'static,
     {
         Self {
             handler: Arc::new(move |event: &dyn Event| {

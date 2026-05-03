@@ -30,10 +30,10 @@
          <b>Thread-safe</b> by design, it handles <b>concurrent access</b> efficiently using read-write locks that allow multiple threads to dispatch events simultaneously without blocking. 
     </p>
     <p>
-         This library includes a <em>flexible middleware system</em> for event filtering, transformation, and logging. It uses a comprehensive error handler that doesn't stop event propagation on individual listener failures, and it has built-in metrics for monitoring event dispatch performance and debugging. 
+         This library includes a <em>flexible middleware system</em> for event filtering, transformation, and logging. Listener failures do not stop event propagation: each listener's outcome is collected into a <code>DispatchResult</code> the caller can inspect. Per-event-type metrics (dispatch counts, listener counts, last-dispatch timestamps) are recorded for monitoring and debugging.
     </p>
     <p>
-         Unlike string-based event systems common in other languages, this library leverages Rust's type system to prevent runtime errors and ensure listeners receive correctly typed events.
+         Unlike string-based event systems common in other languages, this library uses Rust's type system to prevent runtime errors and ensure listeners receive correctly typed events.
     </p>
     <br>
 </div>
@@ -170,12 +170,12 @@ cargo test --release benchmark
 
 ## Documentation
 
-- [Quick Start Guide]([.](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75)/docs/quick-start.md)
-- [API Reference](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/api-reference.md) 
-- [Performance Guide](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/performance.md)
-- [Examples](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/examples.md)
-- [Best Practices](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/best-practices.md)
-- [Migration Guide](https://github.com/jamesgober/mod-events/blob/da3d75763047fd9427480cbfd08425f050dc2b75/docs/migration.md)
+- [Quick Start Guide](docs/quick-start.md)
+- [API Reference](docs/api-reference.md)
+- [Performance Guide](docs/performance.md)
+- [Examples](docs/examples.md)
+- [Best Practices](docs/best-practices.md)
+- [Migration Guide](docs/migration.md)
 
 <br>
 
@@ -184,7 +184,7 @@ cargo test --release benchmark
 ============================================================================ -->
 <div id="license">
     <hr>
-    <h2>📌 License</h2>
+    <h2>License</h2>
     <p>Licensed under the <b>Apache License</b>, version 2.0 (the <b>"License"</b>); you may not use this software, including, but not limited to the source code, media files, ideas, techniques, or any other associated property or concept belonging to, associated with, or otherwise packaged with this software except in compliance with the <b>License</b>.</p>
     <p>You may obtain a copy of the <b>License</b> at: <a href="http://www.apache.org/licenses/LICENSE-2.0" title="Apache-2.0 License" target="_blank">http://www.apache.org/licenses/LICENSE-2.0</a>.</p>
     <p>Unless required by applicable law or agreed to in writing, software distributed under the <b>License</b> is distributed on an "<b>AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND</b>, either express or implied.</p>

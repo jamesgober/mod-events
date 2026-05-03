@@ -699,7 +699,7 @@ The library uses standard Rust error handling:
 
 ## Examples
 
-See the [Examples](examples.md) documentation for comprehensive usage examples.
+See the [Examples](examples.md) document for end-to-end usage patterns.
 
 ## Migration Guide
 

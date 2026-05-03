@@ -366,7 +366,7 @@ dispatcher.unsubscribe(listener_id);
 
 ## Conclusion
 
-Following these best practices will help you build maintainable, performant, and robust event-driven applications with mod-events.
+Following these practices keeps event-driven code with mod-events maintainable, performant, and reliable under load.
 
 Key takeaways:
 - Keep events simple and focused
