@@ -49,16 +49,17 @@ fn main() {
     });
 }
 
-fn write_to_file(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn write_to_file(message: &str) -> Result<(), ListenerError> {
     use std::fs::OpenOptions;
     use std::io::Write;
-    
+
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("app.log")?;
-    
-    writeln!(file, "{}", message)?;
+        .open("app.log")
+        .map_err(ListenerError::new)?;
+
+    writeln!(file, "{}", message).map_err(ListenerError::new)?;
     Ok(())
 }
 
@@ -137,7 +138,7 @@ fn main() {
     });
 }
 
-fn validate_order(order: &OrderPlaced) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn validate_order(order: &OrderPlaced) -> Result<(), ListenerError> {
     if order.amount <= 0.0 {
         return Err("Invalid order amount".into());
     }
@@ -813,7 +814,7 @@ fn setup_cqrs(dispatcher: &EventDispatcher) {
 
 ```rust
 // Common helper functions used in examples
-fn process_payment(data: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn process_payment(data: &serde_json::Value) -> Result<(), ListenerError> {
     println!("processing payment: {:?}", data);
     Ok(())
 }
@@ -822,7 +823,7 @@ fn send_notification(data: &serde_json::Value) {
     println!("sending notification: {:?}", data);
 }
 
-fn store_event_in_database(event: &DomainEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn store_event_in_database(event: &DomainEvent) -> Result<(), ListenerError> {
     println!("storing event: {} v{}", event.event_type, event.version);
     Ok(())
 }
@@ -835,22 +836,22 @@ fn trigger_side_effects(event: &DomainEvent) {
     println!("triggering side effects for: {}", event.event_type);
 }
 
-fn handle_create_user(payload: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn handle_create_user(payload: &serde_json::Value) -> Result<(), ListenerError> {
     println!("creating user: {:?}", payload);
     Ok(())
 }
 
-fn handle_update_user(payload: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn handle_update_user(payload: &serde_json::Value) -> Result<(), ListenerError> {
     println!("updating user: {:?}", payload);
     Ok(())
 }
 
-fn handle_get_user(params: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn handle_get_user(params: &serde_json::Value) -> Result<(), ListenerError> {
     println!("getting user: {:?}", params);
     Ok(())
 }
 
-fn handle_list_users(params: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn handle_list_users(params: &serde_json::Value) -> Result<(), ListenerError> {
     println!("listing users: {:?}", params);
     Ok(())
 }

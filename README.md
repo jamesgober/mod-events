@@ -42,13 +42,14 @@
 ## Key Features
 
 - **Zero-cost abstractions**: *No runtime overhead for event dispatch*.
-- **Type-safe**: *Compile-time guarantees for event handling*.
-- **Thread-safe**: *Built for concurrent applications*.
+- **Type-safe**: *Compile-time guarantees, plus a typed `ListenerError` instead of `Box<dyn Error>`*.
+- **Thread-safe**: *Built for concurrent applications, with `parking_lot` locks that never poison*.
+- **Lock-free metrics**: *Per-event-type `AtomicU64` counters; the dispatch path never takes a write lock*.
 - **Async support**: *Full async/await compatibility*.
-- **Flexible**: *Support for sync, async, and priority-based listeners*.
+- **Flexible**: *Support for sync, async, and priority-based listeners (FIFO within equal priority)*.
 - **Easy to use**: *Simple API and intuitive methods*.
-- **Performance**: *Optimized for high-throughput scenarios*.
-- **Monitoring**: *Built-in metrics and middleware support*.
+- **Performance**: *Optimized for high-throughput scenarios; subscribe is O(n), dispatch is read-lock-only*.
+- **Monitoring**: *Built-in metrics, middleware, and `loom`-verified concurrency invariants*.
 
 <br>
 
@@ -61,6 +62,8 @@ Add this to your `Cargo.toml`:
 [dependencies]
 mod-events = "0.2"
 ```
+
+MSRV: Rust 1.81.
 
 ## Basic Usage
 
@@ -141,14 +144,28 @@ dispatcher.add_middleware(|event: &dyn Event| {
 
 ### Error Handling
 
+Listeners return `Result<(), ListenerError>`. `ListenerError` wraps any
+`Error + Send + Sync + 'static` and converts from `&str`, `String`, or
+an existing `Box<dyn Error + Send + Sync>` via `Into`, so common
+patterns like `Err("bad input".into())` keep working.
+
 ```rust
+use mod_events::ListenerError;
+
+dispatcher.subscribe(|event: &MyEvent| -> Result<(), ListenerError> {
+    if event.message.is_empty() {
+        return Err("message cannot be empty".into());
+    }
+    Ok(())
+});
+
 let result = dispatcher.dispatch(MyEvent { /* ... */ });
 
 if result.all_succeeded() {
-    println!("All handlers succeeded");
+    println!("all handlers succeeded");
 } else {
     for error in result.errors() {
-        eprintln!("Handler error: {}", error);
+        eprintln!("handler error: {}", error);
     }
 }
 ```

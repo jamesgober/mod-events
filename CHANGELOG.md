@@ -6,6 +6,27 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-03
+
+Patch release. CI hardening, security advisories cleared, MSRV bumped to keep the committed lockfile parseable. No public API changes from `0.2.0`.
+
+### Changed
+- **Breaking (build-time only):** MSRV bumped from `1.75` to `1.81`. Cargo lockfile format v4 (default since Rust 1.78) cannot be parsed by older toolchains, and the MSRV CI job for `1.75` failed at lockfile parse before any code compiled. `1.81` is conservative — stable since 2024-09-05.
+- `rust-toolchain.toml` left at `1.95.0`. Day-to-day work and the `check` matrix continue to use `1.95.0`; the dedicated `msrv` job verifies `1.81.0`.
+
+### Fixed
+- **Security: RUSTSEC-2026-0007** (`bytes`). Pulled patched `bytes 1.11.1` into the committed lockfile (was `1.10.1`). The advisory describes an integer overflow in `BytesMut::reserve` that can corrupt the capacity field and cause out-of-bounds slices. `bytes` is a transitive dependency via `tokio`. Fix lands by `cargo update -p bytes`.
+- **Security: RUSTSEC-2025-0047** (`slab`). Pulled patched `slab 0.4.12` into the committed lockfile (was `0.4.10`, also yanked). The advisory describes an out-of-bounds access in `Slab::get_disjoint_mut` due to an incorrect bounds check. Transitive via `tokio`. Fix lands by `cargo update -p slab`.
+- CI workflow now declares `permissions: { contents: read, checks: write }`. The `rustsec/audit-check` action posts findings as GitHub Check Runs, which require `checks: write`; without it the action failed with `Resource not accessible by integration`.
+
+### Documentation
+- `README.md` Key Features and Error Handling sections updated to mention `ListenerError`, the lock-free metrics path, FIFO equal-priority ordering, and the `loom`-verified concurrency invariants. Install snippet documents the `1.81` MSRV.
+- `docs/quick-start.md` install snippet bumped to `0.2`; documents the `1.81` MSRV; subscribe example notes the `ListenerError` conversion path.
+- `docs/api-reference.md` rewritten to match the 0.2.x signatures: every handler and trait signature uses `Result<(), ListenerError>` instead of `Result<(), Box<dyn Error + Send + Sync>>`; `EventMetadata::dispatch_count` documented as `u64`; `Priority` shown with `#[derive(Default)]`; `AsyncEventResult<'a>` documented as the canonical async-listener return type; new `ListenerError` section under Error Handling; Performance Characteristics rewritten to reflect the lock-free metrics path and binary-insertion subscribe; obsolete `AsyncResult` / `AsyncHandler` aliases removed.
+- `docs/best-practices.md` reusable-listener example updated to return `Result<(), ListenerError>` and convert foreign errors via `ListenerError::new`.
+- `docs/examples.md` helper signatures updated to return `Result<(), ListenerError>`; the file-write helper converts `io::Error` via `ListenerError::new`.
+- `docs/migration.md` adds an "Upgrading from mod-events 0.1.0-beta to 0.2.x" section at the top: dependency bump, MSRV note, listener-error refactor with before/after, async-listener `AsyncEventResult<'a>` example, `EventMetadata::dispatch_count: u64` cast, and a summary of internal performance changes.
+
 ## [0.2.0] — 2026-05-03
 
 First stable release. Brings the dispatcher in line with the project's REPS engineering standards: typed listener errors, lock-free metrics on the dispatch hot path, no `unwrap()` in library code, full lint coverage, MSRV pinned to 1.75, cross-OS CI, and `loom` model checks for the only double-checked-locking pattern in the crate.
@@ -79,6 +100,7 @@ Initial public preview of the event dispatcher.
 - Default features: `async`. Disable with `default-features = false` if you need a sync-only build.
 - MSRV is unspecified for this preview; see the roadmap for the planned pin.
 
-[Unreleased]: https://github.com/jamesgober/mod-events/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/jamesgober/mod-events/compare/0.2.1...HEAD
+[0.2.1]: https://github.com/jamesgober/mod-events/compare/0.2.0...0.2.1
 [0.2.0]: https://github.com/jamesgober/mod-events/compare/0.1.0-beta...0.2.0
 [0.1.0-beta]: https://github.com/jamesgober/mod-events/releases/tag/0.1.0-beta

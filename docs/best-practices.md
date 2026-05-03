@@ -83,9 +83,13 @@ struct UserRegistrationHandler {
 }
 
 impl EventListener<UserRegistered> for UserRegistrationHandler {
-    fn handle(&self, event: &UserRegistered) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.email_service.send_welcome(&event.email)?;
-        self.analytics.track_registration(event.user_id)?;
+    fn handle(&self, event: &UserRegistered) -> Result<(), ListenerError> {
+        self.email_service
+            .send_welcome(&event.email)
+            .map_err(ListenerError::new)?;
+        self.analytics
+            .track_registration(event.user_id)
+            .map_err(ListenerError::new)?;
         Ok(())
     }
 }

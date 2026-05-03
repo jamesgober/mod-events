@@ -7,13 +7,12 @@
 # ===================================================
 [package]
 name = "mod-events"
-# Released 2026-05-03. Bump from `0.1.0-beta` to `0.2.0` reflects the
-# breaking API changes listed under [0.2.0] in CHANGELOG.md (Box<dyn
-# Error> → `ListenerError`, `EventMetadata::dispatch_count` u64,
-# atomic-metrics rework, removed unsafe impls). REPS §Versioning: a
-# breaking change in any library crate MUST result in a MAJOR-position
-# bump; for 0.x crates the convention is to bump MINOR.
-version = "0.2.0"
+# 0.2.1 (2026-05-03) — patch release. Pulls patched `bytes 1.11.1` and
+# `slab 0.4.12` (RUSTSEC-2026-0007 / RUSTSEC-2025-0047) into the
+# committed lockfile and bumps MSRV to 1.81 so the lockfile-format-v4
+# file ships in `Cargo.lock` is parseable by the MSRV CI job. No public
+# API changes from 0.2.0. See CHANGELOG.md `[0.2.1]`.
+version = "0.2.1"
 edition = "2021"
 # MSRV. Bumped from 1.75 → 1.81 because Cargo lockfile format v4
 # (default since Rust 1.78) cannot be parsed by older toolchains. CI's

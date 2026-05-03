@@ -14,9 +14,12 @@ Complete API documentation for mod-events.
 - [Priority System](#priority-system)
 - [Event Listeners](#event-listeners)
 - [Results and Metrics](#results-and-metrics)
-- [Async Support](#async-support)
 - [Middleware](#middleware)
 - [Type Aliases](#type-aliases)
+- [Feature Flags](#feature-flags)
+- [Thread Safety](#thread-safety)
+- [Performance Characteristics](#performance-characteristics)
+- [Error Handling](#error-handling) — including [`ListenerError`](#listenererror)
 
 ## Core Traits
 
@@ -100,7 +103,7 @@ Subscribe to an event with error handling.
 
 **Parameters:**
 - `T: Event + 'static` - The event type
-- `F: Fn(&T) -> Result<(), Box<dyn Error + Send + Sync>> + Send + Sync + 'static` - The listener function
+- `F: Fn(&T) -> Result<(), ListenerError> + Send + Sync + 'static` - The listener function
 
 **Returns:** `ListenerId` - Unique identifier for the listener
 
@@ -120,7 +123,7 @@ Subscribe to an event with a specific priority.
 
 **Parameters:**
 - `T: Event + 'static` - The event type
-- `F: Fn(&T) -> Result<(), Box<dyn Error + Send + Sync>> + Send + Sync + 'static` - The listener function
+- `F: Fn(&T) -> Result<(), ListenerError> + Send + Sync + 'static` - The listener function
 - `priority: Priority` - The priority level
 
 **Returns:** `ListenerId` - Unique identifier for the listener
@@ -143,7 +146,7 @@ Subscribe to an event with an async handler.
 **Parameters:**
 - `T: Event + 'static` - The event type
 - `F: Fn(&T) -> Fut + Send + Sync + 'static` - The async listener function
-- `Fut: Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'static` - The future type
+- `Fut: Future<Output = Result<(), ListenerError>> + Send + 'static` - The future type
 
 **Returns:** `ListenerId` - Unique identifier for the listener
 
@@ -163,7 +166,7 @@ Subscribe to an event with an async handler and specific priority.
 **Parameters:**
 - `T: Event + 'static` - The event type
 - `F: Fn(&T) -> Fut + Send + Sync + 'static` - The async listener function
-- `Fut: Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'static` - The future type
+- `Fut: Future<Output = Result<(), ListenerError>> + Send + 'static` - The future type
 - `priority: Priority` - The priority level
 
 **Returns:** `ListenerId` - Unique identifier for the listener
@@ -307,16 +310,21 @@ for (_, meta) in metrics {
 Enum defining listener execution priority.
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Priority {
     Lowest = 0,
     Low = 25,
-    Normal = 50,     // Default
+    #[default]
+    Normal = 50,
     High = 75,
     Highest = 100,
     Critical = 125,
 }
 ```
+
+`Default` is implemented and points to `Normal`, so `Priority::default()`
+or any `..Default::default()` struct-update expression yields normal
+priority.
 
 #### Values
 
@@ -365,14 +373,14 @@ Trait for reusable event listeners.
 
 ```rust
 pub trait EventListener<T: Event>: Send + Sync {
-    fn handle(&self, event: &T) -> Result<(), Box<dyn Error + Send + Sync>>;
+    fn handle(&self, event: &T) -> Result<(), ListenerError>;
     fn priority(&self) -> Priority { Priority::Normal }
 }
 ```
 
 #### Required Methods
 
-- **`handle(&self, event: &T) -> Result<(), Box<dyn Error + Send + Sync>>`** - Handle the event
+- **`handle(&self, event: &T) -> Result<(), ListenerError>`** - Handle the event
 
 #### Provided Methods
 
@@ -381,18 +389,19 @@ pub trait EventListener<T: Event>: Send + Sync {
 #### Example
 
 ```rust
-use mod_events::{Event, EventListener, Priority};
+use mod_events::{Event, EventListener, ListenerError, Priority};
 
 struct EmailNotifier {
     smtp_server: String,
 }
 
 impl EventListener<UserRegistered> for EmailNotifier {
-    fn handle(&self, event: &UserRegistered) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        send_email(&self.smtp_server, &event.email)?;
+    fn handle(&self, event: &UserRegistered) -> Result<(), ListenerError> {
+        send_email(&self.smtp_server, &event.email)
+            .map_err(ListenerError::new)?;
         Ok(())
     }
-    
+
     fn priority(&self) -> Priority {
         Priority::High
     }
@@ -406,8 +415,11 @@ impl EventListener<UserRegistered> for EmailNotifier {
 Trait for async event listeners.
 
 ```rust
+pub type AsyncEventResult<'a> =
+    Pin<Box<dyn Future<Output = Result<(), ListenerError>> + Send + 'a>>;
+
 pub trait AsyncEventListener<T: Event>: Send + Sync {
-    fn handle<'a>(&'a self, event: &'a T) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'a>>;
+    fn handle<'a>(&'a self, event: &'a T) -> AsyncEventResult<'a>;
     fn priority(&self) -> Priority { Priority::Normal }
 }
 ```
@@ -423,20 +435,25 @@ pub trait AsyncEventListener<T: Event>: Send + Sync {
 #### Example
 
 ```rust
-use mod_events::{AsyncEventListener, Priority};
+use mod_events::{AsyncEventListener, ListenerError, Priority};
 
 struct AsyncEmailNotifier {
     smtp_client: AsyncSmtpClient,
 }
 
+use mod_events::AsyncEventResult;
+
 impl AsyncEventListener<UserRegistered> for AsyncEmailNotifier {
-    fn handle<'a>(&'a self, event: &'a UserRegistered) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>> {
+    fn handle<'a>(&'a self, event: &'a UserRegistered) -> AsyncEventResult<'a> {
         Box::pin(async move {
-            self.smtp_client.send_email(&event.email).await?;
+            self.smtp_client
+                .send_email(&event.email)
+                .await
+                .map_err(ListenerError::new)?;
             Ok(())
         })
     }
-    
+
     fn priority(&self) -> Priority {
         Priority::High
     }
@@ -513,9 +530,9 @@ if result.has_errors() {
 }
 ```
 
-##### `errors(&self) -> Vec<&(dyn Error + Send + Sync)>`
+##### `errors(&self) -> Vec<&ListenerError>`
 
-Get all errors that occurred during dispatch.
+Borrow every error produced by failing listeners, in dispatch order.
 
 ```rust
 for error in result.errors() {
@@ -532,7 +549,7 @@ pub struct EventMetadata {
     pub event_name: &'static str,
     pub type_id: TypeId,
     pub last_dispatch: Instant,
-    pub dispatch_count: usize,
+    pub dispatch_count: u64,
     pub listener_count: usize,
 }
 ```
@@ -542,8 +559,8 @@ pub struct EventMetadata {
 - **`event_name`** - The name of the event type
 - **`type_id`** - Type ID of the event
 - **`last_dispatch`** - Timestamp of the last dispatch
-- **`dispatch_count`** - Total number of times this event has been dispatched
-- **`listener_count`** - Number of listeners currently subscribed
+- **`dispatch_count`** - `u64`. Total number of times this event has been dispatched. Backed by an `AtomicU64` on the dispatch hot path.
+- **`listener_count`** - Number of listeners (sync + async, when the `async` feature is enabled) currently subscribed. Derived from the live registry at snapshot time, so it cannot drift.
 
 #### Methods
 
@@ -626,35 +643,39 @@ Remove all middleware.
 
 ## Type Aliases
 
-### AsyncResult
+### AsyncEventResult
 
 *Available with the `async` feature*
 
 ```rust
-type AsyncResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+pub type AsyncEventResult<'a> =
+    Pin<Box<dyn Future<Output = Result<(), ListenerError>> + Send + 'a>>;
 ```
 
-Standard result type for async operations.
+The pinned, boxed future type returned by [`AsyncEventListener::handle`].
+Use it as the return type when implementing `AsyncEventListener` by
+hand instead of spelling out the full `Pin<Box<…>>`.
 
-### AsyncHandler
-
-*Available with the `async` feature*
+### MiddlewareFunction
 
 ```rust
-type AsyncHandler = Arc<dyn for<'a> Fn(&'a dyn Event) -> Pin<Box<dyn Future<Output = AsyncResult> + Send + 'a>> + Send + Sync>;
+pub type MiddlewareFunction = Box<dyn Fn(&dyn Event) -> bool + Send + Sync>;
 ```
 
-Type alias for async event handlers.
+Boxed middleware function. See the [Middleware](#middleware) section.
 
 ## Feature Flags
 
 ### `async`
 
-Enables async event handling support.
+Enables async event handling support. On by default.
 
 ```toml
 [dependencies]
-mod-events = { version = "0.1", features = ["async"] }
+mod-events = { version = "0.2", features = ["async"] }
+
+# Disable to build sync-only:
+mod-events = { version = "0.2", default-features = false }
 ```
 
 When enabled, provides:
@@ -674,19 +695,60 @@ All types in mod-events are thread-safe:
 
 ## Performance Characteristics
 
-- **Event dispatch**: ~1-2 microseconds
-- **Memory overhead**: ~200 bytes per dispatcher
-- **Scaling**: Linear with number of listeners
-- **Thread contention**: Minimal (read-heavy workload)
+- **Event dispatch**: sub-microsecond per listener.
+- **Subscribe**: O(n) per call (binary insertion via `Vec::partition_point`).
+- **Metrics path**: lock-free on the hot path. The dispatch path takes a read lock on the metrics map, clones a per-type `Arc`, releases the lock, then increments atomics. The write lock is only ever taken on the first dispatch of a brand-new event type.
+- **Memory overhead**: ~200 bytes per dispatcher plus ~64 bytes per registered event type.
+- **Scaling**: Linear with number of listeners per event type.
+- **Thread contention**: Minimal — `parking_lot::RwLock` for the registry, `AtomicU64` for counters. Concurrency invariants verified by `loom` model checks for the only double-checked-locking pattern in the crate.
 
 ## Error Handling
 
-The library uses standard Rust error handling:
+The library uses typed error handling at every public boundary:
 
-- `Result<T, E>` for fallible operations
-- `Box<dyn Error + Send + Sync>` for dynamic errors
-- Individual listener failures don't affect other listeners
-- Middleware can block events by returning `false`
+- `Result<T, E>` for every fallible operation.
+- [`ListenerError`](#listenererror) — typed wrapper around any
+  `Error + Send + Sync + 'static`. This is the *only* error type
+  exported from the crate; `Box<dyn Error>` does not appear in any
+  public signature.
+- Individual listener failures do not affect other listeners.
+- Middleware can block events by returning `false`; the resulting
+  `DispatchResult::is_blocked()` returns `true`.
+
+### ListenerError
+
+```rust
+pub struct ListenerError(/* Box<dyn Error + Send + Sync + 'static> */);
+
+impl ListenerError {
+    pub fn new<E: Error + Send + Sync + 'static>(error: E) -> Self;
+    pub fn message<S: Into<String>>(msg: S) -> Self;
+    pub fn inner(&self) -> &(dyn Error + Send + Sync + 'static);
+    pub fn into_inner(self) -> Box<dyn Error + Send + Sync + 'static>;
+}
+
+impl From<Box<dyn Error + Send + Sync + 'static>> for ListenerError { /* … */ }
+impl From<&str> for ListenerError { /* … */ }
+impl From<String> for ListenerError { /* … */ }
+```
+
+Common construction patterns:
+
+```rust
+use mod_events::ListenerError;
+use std::io;
+
+// From any concrete error type:
+let e = ListenerError::new(io::Error::new(io::ErrorKind::Other, "io failed"));
+
+// From a string literal or owned String, via Into:
+let e: ListenerError = "validation failed".into();
+let e: ListenerError = format!("retry budget exhausted at {}", 5).into();
+
+// From an existing boxed error:
+fn pre_existing() -> Box<dyn std::error::Error + Send + Sync> { /* … */ unreachable!() }
+let e: ListenerError = pre_existing().into();
+```
 
 ## Best Practices
 

@@ -5,10 +5,12 @@
     <sup><br><sup>MIGRATION GUIDE</sup></sup>
 </h1>
 
-This guide helps you migrate from other event systems to mod-events.
+This guide helps you migrate from other event systems to mod-events,
+and from older versions of mod-events itself.
 
 ## Table of Contents
 
+- [Upgrading from mod-events 0.1.0-beta to 0.2.x](#upgrading-from-mod-events-010-beta-to-02x)
 - [From Node.js EventEmitter](#from-nodejs-eventemitter)
 - [From C# Event System](#from-c-event-system)
 - [From Java Event Systems](#from-java-event-systems)
@@ -19,6 +21,127 @@ This guide helps you migrate from other event systems to mod-events.
 - [From Custom Event Systems](#from-custom-event-systems)
 - [Breaking Changes](#breaking-changes)
 - [Performance Improvements](#performance-improvements)
+
+## Upgrading from mod-events 0.1.0-beta to 0.2.x
+
+Most upgrades require **zero code changes**. The only two breaking
+changes are concentrated in the listener-error type and the
+`EventMetadata::dispatch_count` field.
+
+### 1. Bump the dependency
+
+```toml
+[dependencies]
+# Was:
+# mod-events = "0.1"
+# Now:
+mod-events = "0.2"
+```
+
+`0.2.x` requires Rust **1.81** or newer (was 1.75 in `0.1.0-beta`).
+
+### 2. Listener handlers return `Result<(), ListenerError>`
+
+`Box<dyn std::error::Error + Send + Sync>` no longer appears in any
+public signature. The new `ListenerError` newtype wraps the same
+information and implements `From<&str>`, `From<String>`, and
+`From<Box<dyn Error + Send + Sync>>`, so the most common patterns keep
+working unchanged:
+
+```rust
+// Still works in 0.2.x — `&str` converts into `ListenerError`.
+dispatcher.subscribe(|event: &MyEvent| {
+    if event.bad() {
+        return Err("bad event".into());
+    }
+    Ok(())
+});
+```
+
+If you implemented `EventListener` or `AsyncEventListener` directly,
+update the trait impl to use `ListenerError`:
+
+```rust
+// Before (0.1.0-beta)
+use mod_events::EventListener;
+
+impl EventListener<UserRegistered> for EmailNotifier {
+    fn handle(&self, event: &UserRegistered)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    {
+        send_email(&event.email)?;
+        Ok(())
+    }
+}
+
+// After (0.2.x)
+use mod_events::{EventListener, ListenerError};
+
+impl EventListener<UserRegistered> for EmailNotifier {
+    fn handle(&self, event: &UserRegistered) -> Result<(), ListenerError> {
+        send_email(&event.email).map_err(ListenerError::new)?;
+        Ok(())
+    }
+}
+```
+
+For async listeners, `AsyncEventResult<'a>` is the new type alias for
+the pinned, boxed future:
+
+```rust
+use mod_events::{AsyncEventListener, AsyncEventResult, ListenerError};
+
+impl AsyncEventListener<UserRegistered> for AsyncEmailNotifier {
+    fn handle<'a>(&'a self, event: &'a UserRegistered) -> AsyncEventResult<'a> {
+        Box::pin(async move {
+            self.send(&event.email).await.map_err(ListenerError::new)?;
+            Ok(())
+        })
+    }
+}
+```
+
+`DispatchResult::errors()` now returns `Vec<&ListenerError>` (was
+`Vec<&(dyn Error + Send + Sync)>`). Both implement `Display` and
+`Error::source()`, so logging code that prints the error or walks the
+chain keeps working without change.
+
+### 3. `EventMetadata::dispatch_count` is now `u64`
+
+Backed by an `AtomicU64` on the dispatch hot path. If you read it into
+a `usize` somewhere, add a cast:
+
+```rust
+// Before
+let count: usize = meta.dispatch_count;
+
+// After
+let count = meta.dispatch_count as usize;
+```
+
+### 4. Performance — what changed under the hood
+
+No code changes needed; these are observability improvements:
+
+- The dispatch path no longer takes a write lock on the metrics map.
+  Per-event-type counters live behind an `Arc<EventMetricsCounters>`
+  with `AtomicU64` backing.
+- `subscribe` is O(n) instead of O(n log n). Equal-priority listeners
+  still run in registration order (FIFO).
+- Lock primitive is `parking_lot::RwLock` instead of
+  `std::sync::RwLock`. Lock acquisition is infallible — there is no
+  lock-poisoning failure mode anywhere in the public API.
+- `EventDispatcher::metrics()` derives `listener_count` from the live
+  registry at snapshot time, so it cannot drift on `unsubscribe` or
+  `clear`.
+
+### 5. New things to be aware of
+
+- `prelude::*` now re-exports `ListenerError`.
+- `DispatchResult` carries `#[must_use]`; ignoring the return of
+  `dispatch` is a compiler warning. Use `emit` for fire-and-forget.
+- `EventDispatcher::new()` is `#[must_use]`.
+- `Priority` now derives `Default` (returns `Priority::Normal`).
 
 ## From Node.js EventEmitter
 

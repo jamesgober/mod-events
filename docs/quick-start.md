@@ -13,11 +13,16 @@ Add mod-events to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mod-events = "0.1"
+mod-events = "0.2"
 
-# For async support
-mod-events = { version = "0.1", features = ["async"] }
+# For async support (default)
+mod-events = { version = "0.2", features = ["async"] }
+
+# Sync-only build
+mod-events = { version = "0.2", default-features = false }
 ```
+
+MSRV: Rust 1.81.
 
 ## Basic Usage
 
@@ -58,9 +63,10 @@ dispatcher.on(|event: &UserRegistered| {
     println!("User {} registered!", event.user_id);
 });
 
-// With error handling
+// With error handling. The closure returns `Result<(), ListenerError>`;
+// `&str`, `String`, and `Box<dyn Error + Send + Sync>` all convert into
+// `ListenerError` via `Into`, so `Err("…".into())` works as-is.
 dispatcher.subscribe(|event: &UserRegistered| {
-    // Your logic here
     if event.email.is_empty() {
         return Err("Email cannot be empty".into());
     }
