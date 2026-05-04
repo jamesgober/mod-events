@@ -12,6 +12,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 ### Changed
 - Dependabot's `github-actions` ecosystem now groups minor + patch updates from `actions/*` (the GitHub-published actions) and from third-party publishers separately. Major-version bumps still get their own PR per action so breaking changes are not hidden in a group. Cuts the per-cycle PR count from one-per-action to roughly two.
 - Dependabot now ignores `dtolnay/rust-toolchain` updates. The action uses Rust version numbers as tags (e.g. `@1.81.0` in the `msrv` CI job), and Dependabot mistakes those for action versions, opening PRs to bump them to non-existent Rust versions (it tried `@1.100.0`). The MSRV pin must track `Cargo.toml`'s `rust-version` field, never auto-bump.
+- `Cargo.toml` `exclude` list narrowed: examples, benches, and docs now ship in the published tarball. They are useful for vendoring users and are rendered by crates.io / docs.rs. The previous broader exclusion triggered `cargo publish` warnings (`ignoring example/benchmark, not in published package`) because `[[bench]]` was declared but the benches directory was excluded. Tarball grew from ~50 KiB to ~92 KiB compressed — irrelevant for download but the warnings are gone.
 
 ## [0.9.0] — 2026-05-03
 

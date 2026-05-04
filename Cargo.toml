@@ -36,19 +36,19 @@ categories = ["concurrency", "asynchronous", "data-structures"]
 
 authors = ["James Gober <me@jamesgober.com>"]
 
-# Keep the published tarball minimal: only what consumers compile
-# against. Examples, benchmarks, docs, CI config, and the private
-# `.dev/` working notes are useful in the repo but bloat the crate
-# download for downstream users.
+# Strip only the truly-internal files from the published tarball.
+# Examples, benches, and docs ship — vendoring users get them, and
+# crates.io / docs.rs render them. Excluding `examples/` and
+# `benches/` while declaring `[[bench]]` triggered `cargo publish`
+# warnings ("ignoring example/benchmark, not in published package");
+# shipping them removes the warning at zero real cost (a few KB on
+# the tarball).
 exclude = [
     ".dev/",
     ".github/",
     ".editorconfig",
     ".gitattributes",
     ".gitignore",
-    "benches/",
-    "docs/",
-    "examples/",
     "rust-toolchain.toml",
     "deny.toml",
     "REPS.md",
