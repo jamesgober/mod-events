@@ -44,13 +44,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # rust-toolchain.toml drives the channel + components for every
-      # job. The `target` line below adds the matrix's target triple
-      # to the same toolchain.
+      # `dtolnay/rust-toolchain@stable` installs the stable channel,
+      # but `rust-toolchain.toml` in the workspace overrides cargo to
+      # use the pinned channel (1.95.0). Targets installed via the
+      # action's `targets:` parameter would be attached to the wrong
+      # toolchain (stable, not 1.95.0), causing `error[E0463]: can't
+      # find crate for 'core'` on cross-targets like musl. Install the
+      # target separately via `rustup target add` from inside the
+      # workspace, where rustup honours rust-toolchain.toml and adds
+      # the target to the actually-active toolchain.
       - uses: dtolnay/rust-toolchain@stable
         id: toolchain
-        with:
-          targets: ${{ matrix.target }}
+
+      - name: install matrix target on workspace toolchain
+        run: rustup target add ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           # Cache key includes the target so musl + glibc + arm64 don't
