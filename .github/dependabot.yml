@@ -60,6 +60,16 @@ updates:
     commit-message:
       prefix: "ci"
       include: scope
+    ignore:
+      # `dtolnay/rust-toolchain` uses Rust version numbers as action
+      # tags (e.g. `@1.81.0`). Dependabot mistakes these for action
+      # versions and opens PRs to bump them to non-existent Rust
+      # versions (e.g. `@1.100.0`). The Rust version pin in the
+      # `msrv` job is intentional — it tracks our declared MSRV in
+      # `Cargo.toml` and must move only when MSRV is bumped, never
+      # automatically. The `@stable` usage in every other job
+      # auto-resolves and does not need a Dependabot update either.
+      - dependency-name: "dtolnay/rust-toolchain"
     groups:
       # All GitHub-published actions (`actions/*`) move on the same
       # cadence and are usually safe to bump together. This collapses

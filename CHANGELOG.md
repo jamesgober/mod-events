@@ -11,6 +11,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ### Changed
 - Dependabot's `github-actions` ecosystem now groups minor + patch updates from `actions/*` (the GitHub-published actions) and from third-party publishers separately. Major-version bumps still get their own PR per action so breaking changes are not hidden in a group. Cuts the per-cycle PR count from one-per-action to roughly two.
+- Dependabot now ignores `dtolnay/rust-toolchain` updates. The action uses Rust version numbers as tags (e.g. `@1.81.0` in the `msrv` CI job), and Dependabot mistakes those for action versions, opening PRs to bump them to non-existent Rust versions (it tried `@1.100.0`). The MSRV pin must track `Cargo.toml`'s `rust-version` field, never auto-bump.
 
 ## [0.9.0] — 2026-05-03
 
