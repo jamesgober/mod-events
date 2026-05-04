@@ -10,6 +10,7 @@ and from older versions of mod-events itself.
 
 ## Table of Contents
 
+- [Upgrading from mod-events 0.2.x to 0.9.0](#upgrading-from-mod-events-02x-to-090)
 - [Upgrading from mod-events 0.1.0-beta to 0.2.x](#upgrading-from-mod-events-010-beta-to-02x)
 - [From Node.js EventEmitter](#from-nodejs-eventemitter)
 - [From C# Event System](#from-c-event-system)
@@ -21,6 +22,89 @@ and from older versions of mod-events itself.
 - [From Custom Event Systems](#from-custom-event-systems)
 - [Breaking Changes](#breaking-changes)
 - [Performance Improvements](#performance-improvements)
+
+## Upgrading from mod-events 0.2.x to 0.9.0
+
+`0.9.0` is the release-candidate-style minor for `1.0`. Most upgrades
+are a one-line `Cargo.toml` change. Two breaking changes need
+attention if your code touches them.
+
+### 1. Bump the dependency
+
+```toml
+[dependencies]
+# Was:
+# mod-events = "0.2.1"
+# Now:
+mod-events = "0.9.0"
+```
+
+MSRV is unchanged at Rust 1.81.
+
+### 2. `tokio` is no longer a transitive dep when `async` is enabled
+
+`mod-events` is now runtime-agnostic. The `async` cargo feature pulls
+in only `futures-util` for `catch_unwind`; it does **not** pull in
+tokio. The library never imported tokio anyway — only the cargo
+feature wiring did.
+
+If your project was relying on `mod-events` to pull tokio into your
+dependency tree, add tokio explicitly:
+
+```toml
+[dependencies]
+mod-events = "0.9.0"
+tokio = { version = "1", features = ["..."] }   # whatever your code needs
+```
+
+If you already declare tokio yourself, no change.
+
+### 3. `DispatchResult::errors()` returns `&[ListenerError]`
+
+Was `Vec<&ListenerError>` in `0.2.x`. Iteration is unchanged:
+
+```rust
+// Both 0.2.x and 0.9.0
+for err in result.errors() {
+    eprintln!("listener failed: {err}");
+}
+```
+
+If you assigned the return value to a `Vec<&ListenerError>`, change
+the type to `&[ListenerError]` (or call `.to_vec()` if you need
+ownership). Most call sites don't need any change.
+
+### 4. New behavior — async listeners are now panic-safe
+
+`dispatch_async` previously propagated panics from listener futures
+out through the `.await` chain into the dispatching task. In `0.9.0`
+each listener future is wrapped in `FutureExt::catch_unwind`,
+matching the sync `dispatch` contract: a panic becomes a
+`ListenerError` with the message prefix `"listener panicked: "` and
+subsequent listeners still run.
+
+Code that previously relied on a panicking listener crashing the
+dispatching task (rare) should rework to inspect
+`DispatchResult::errors()` and re-panic explicitly if that is the
+desired contract.
+
+### 5. New convenience — `EventDispatcher::clear_middleware()`
+
+Drops every registered middleware without affecting listeners or
+metrics. Useful in test setup/teardown.
+
+### 6. Performance changes — no code change required
+
+- Successful dispatches now perform **zero heap allocations** for
+  the result. The lazy errors `Vec` stays empty until the first
+  failure.
+- `emit` skips the result-building path entirely. Same panic safety,
+  no allocation overhead even on the failure path.
+- Subscribe is `O(n)` via binary insertion (was `O(n log n)` in
+  `0.1.0-beta`; this change actually landed in `0.2.0` but is worth
+  re-stating).
+- The dispatch path takes only read locks. The metrics map's write
+  lock is taken at most once per event type, ever.
 
 ## Upgrading from mod-events 0.1.0-beta to 0.2.x
 
@@ -35,10 +119,10 @@ changes are concentrated in the listener-error type and the
 # Was:
 # mod-events = "0.1"
 # Now:
-mod-events = "0.2.1"
+mod-events = "0.9.0"
 ```
 
-`0.2.x` requires Rust **1.81** or newer (was 1.75 in `0.1.0-beta`).
+`0.9.x` requires Rust **1.81** or newer (was 1.75 in `0.1.0-beta`).
 
 ### 2. Listener handlers return `Result<(), ListenerError>`
 

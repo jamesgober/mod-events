@@ -7,12 +7,16 @@
 # ===================================================
 [package]
 name = "mod-events"
-# 0.2.1 (2026-05-03) — patch release. Pulls patched `bytes 1.11.1` and
-# `slab 0.4.12` (RUSTSEC-2026-0007 / RUSTSEC-2025-0047) into the
-# committed lockfile and bumps MSRV to 1.81 so the lockfile-format-v4
-# file ships in `Cargo.lock` is parseable by the MSRV CI job. No public
-# API changes from 0.2.0. See CHANGELOG.md `[0.2.1]`.
-version = "0.2.1"
+# 0.9.0 (2026-05-03) — release-candidate-style minor for 1.0. Drops
+# the optional tokio runtime dep (the lib is fully runtime-agnostic),
+# adds `catch_unwind` to the async dispatch path (mirrors the sync
+# panic safety), refactors `DispatchResult` to a lazy errors `Vec`
+# (zero allocation on the success path), splits `emit` from `dispatch`
+# so fire-and-forget skips the result vector entirely, adds a
+# `proptest` property suite, expands CI to cross-platform ARM + musl
+# matrix, runs nightly AddressSanitizer, and runs criterion in CI.
+# Adds `EventDispatcher::clear_middleware()`. See CHANGELOG.md `[0.9.0]`.
+version = "0.9.0"
 edition = "2021"
 # MSRV. Bumped from 1.75 → 1.81 because Cargo lockfile format v4
 # (default since Rust 1.78) cannot be parsed by older toolchains. CI's
@@ -32,13 +36,38 @@ categories = ["concurrency", "asynchronous", "data-structures"]
 
 authors = ["James Gober <me@jamesgober.com>"]
 
+# Keep the published tarball minimal: only what consumers compile
+# against. Examples, benchmarks, docs, CI config, and the private
+# `.dev/` working notes are useful in the repo but bloat the crate
+# download for downstream users.
+exclude = [
+    ".dev/",
+    ".github/",
+    ".editorconfig",
+    ".gitattributes",
+    ".gitignore",
+    "benches/",
+    "docs/",
+    "examples/",
+    "rust-toolchain.toml",
+    "deny.toml",
+    "REPS.md",
+]
+
 
 #####################################################
 # FEATURES
 #####################################################
 [features]
 default = ["async"]
-async = ["tokio"]
+# The `async` feature gates the async dispatch APIs. It pulls in
+# `futures-util` for its `FutureExt::catch_unwind` (the panic-safety
+# wrapper around async listeners). It does NOT pull in tokio or any
+# other runtime — `mod-events` is runtime-agnostic and works with any
+# executor that polls `std::future::Future` (tokio, async-std, smol,
+# embassy, etc.). Examples and tests use tokio for convenience, but
+# that lives under `[dev-dependencies]` and is not propagated.
+async = ["dep:futures-util"]
 
 
 #####################################################
@@ -68,15 +97,14 @@ harness = false
 # so this is `=0.12.4` rather than a caret range.
 parking_lot = "=0.12.4"
 
-# why: only used to wire the `async` cargo feature; the library code
-# itself does not import tokio and depends only on `std::future` /
-# `std::pin`. The `sync` feature is the minimum that keeps the optional
-# dependency resolvable. The runtime needed by examples and tests lives
-# under [dev-dependencies] below. Caret-pinned to the 1.x major because
-# the library only depends on the cargo feature wiring, not on any
-# specific tokio API. Roadmap item #11 tracks removing this entry
-# entirely.
-tokio = { version = "1", default-features = false, features = ["sync"], optional = true }
+# why: provides `FutureExt::catch_unwind` for panic-safety on the async
+# dispatch path (mirrors the `std::panic::catch_unwind` wrapping the
+# sync path). Implementing this ourselves would require a `// SAFETY`
+# block for pin projection; pulling in the well-audited futures-util
+# implementation is preferable to growing the unsafe surface. Optional,
+# only compiled when the `async` cargo feature is enabled. Minimal
+# `std` feature set — does NOT bring in futures-executor / futures-io.
+futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }
 
 
 #####################################################
@@ -103,3 +131,10 @@ criterion = "0.5"
 # under `RUSTFLAGS="--cfg loom"`, so the dep does not impact ordinary
 # builds.
 loom = "0.7"
+
+# why: drives the property tests in `tests/property_tests.rs`, which
+# generate randomised sequences of subscribe / unsubscribe / dispatch
+# operations and assert dispatcher invariants across thousands of cases.
+# REPS §Testing requires property-based tests for "algorithms that
+# SHOULD hold for all inputs."
+proptest = "1"

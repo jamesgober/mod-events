@@ -1,0 +1,62 @@
+# Dependabot configuration — REPS §Dependency Management.
+#
+# Two ecosystems matter for this crate:
+#
+# 1. cargo: keeps Cargo.lock current. Catches CVEs (the bytes / slab
+#    advisories that surfaced in 0.2.1 would have been opened as PRs by
+#    Dependabot the day after the upstream patch, instead of being
+#    caught by CI on a release push). `cargo audit` in CI is the safety
+#    net; Dependabot is the prevention.
+# 2. github-actions: keeps the workflow file ahead of action
+#    deprecations (e.g. the actions/checkout@v4 / Node.js 20 notice
+#    currently annotated on every CI run).
+#
+# Updates are rate-limited and grouped to avoid PR-spam. Security
+# updates are always opened immediately and ungrouped.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      tokio-runtime:
+        # Group runtime + tokio-related updates so the lockfile shifts
+        # cohesively and CI runs once across them.
+        patterns:
+          - "tokio"
+          - "tokio-*"
+          - "mio"
+          - "bytes"
+          - "slab"
+      sync-primitives:
+        patterns:
+          - "parking_lot"
+          - "parking_lot_*"
+          - "lock_api"
+      dev-tooling:
+        patterns:
+          - "criterion"
+          - "criterion-*"
+          - "loom"
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: scope

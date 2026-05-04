@@ -6,6 +6,41 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-03
+
+Release-candidate-style minor for `1.0`. Re-engineered the dispatcher around three goals: panic safety on every path, zero-allocation success path, and runtime-agnostic async. Verified with a property-test suite, an expanded cross-platform CI matrix (Linux x86_64 + ARM64 + musl, macOS ARM64, Windows x86_64), nightly AddressSanitizer, and `loom` model checking of the only non-trivial concurrency pattern in the crate. See the full release notes in [`docs/release/v0.9.0.md`](docs/release/v0.9.0.md).
+
+### Added
+- **Async path panic safety.** `dispatch_async` now wraps each listener future in `FutureExt::catch_unwind`. A panicking listener future becomes a `ListenerError` in `DispatchResult::errors()` (prefix `"listener panicked: "`), mirroring the sync dispatch contract. Subsequent listeners still run; the dispatcher remains usable. New test `test_dispatch_async_with_panicking_listener_collects_error_and_continues`.
+- **Sync path panic safety.** `dispatch` and `emit` wrap each listener call in `std::panic::catch_unwind`. Same contract as the async path. New test `test_dispatch_with_panicking_listener_collects_error_and_continues`.
+- **Property test suite** ([tests/property_tests.rs](tests/property_tests.rs)) using `proptest`. Six properties cover dispatch invokes-every-listener-exactly-once, priority-then-FIFO ordering, subscribe/unsubscribe count invariants, dispatch-count metric consistency, middleware blocks-iff-any-false, and clear drops every listener. Each property runs ~256 randomised cases per CI run.
+- **`EventDispatcher::clear_middleware()`** — drops every registered middleware. Counterpart to `clear()` (listeners only).
+- **`futures-util` dependency** (optional, gated on the `async` feature) for `FutureExt::catch_unwind`. Pulled in instead of writing a hand-rolled `CatchUnwind` future to keep the crate's `unsafe` surface at zero.
+- **Cross-platform CI matrix expanded** to five host/target combinations: `ubuntu-latest` x86_64-gnu, `ubuntu-24.04-arm` aarch64-gnu, `ubuntu-latest` x86_64-musl, `macos-latest` aarch64, `windows-latest` x86_64-msvc. Every combination runs fmt + clippy + build + test + doc.
+- **AddressSanitizer CI job** on Linux nightly per REPS §Memory Debugging. Catches use-after-free, double-free, and buffer-overflow that the regular tests miss.
+- **Criterion bench job** in CI uploads the report as a build artifact (30-day retention). Persistent baseline tracking + 5%-regression-gate is the next iteration.
+- **[`docs/architecture.md`](docs/architecture.md)** — design rationale. Why `parking_lot`, why `Arc<EventMetricsCounters>`, why `partition_point`, why sequential async, why `catch_unwind` on both paths, why no `DashMap` yet, why no per-listener timeout, why runtime-agnostic. Documents the lazy errors Vec, the metrics fast path, the test architecture, the memory profile, and the `0.x → 1.0` API stability promise.
+- **[`docs/comparison.md`](docs/comparison.md)** — when to choose `mod-events` vs `tokio::sync::broadcast`, `event-listener`, `bus`, `crossbeam-channel`, plain function calls, or hand-rolled `Vec<Box<dyn Fn>>`. Replaces unverified "Nx faster than Redis/Kafka" claims with honest qualitative comparisons.
+- **Dependabot** ([.github/dependabot.yml](.github/dependabot.yml)) for the `cargo` and `github-actions` ecosystems. Weekly grouped updates, immediate ungrouped security PRs.
+- **Governance files**: [SECURITY.md](SECURITY.md) (vulnerability disclosure policy), [CONTRIBUTING.md](CONTRIBUTING.md) (contributor onboarding + local CI gate), [RELEASING.md](RELEASING.md) (codified release procedure with recovery), [.github/CODEOWNERS](.github/CODEOWNERS).
+- **`Cargo.toml` `exclude`** — published tarball is now library source + README + CHANGELOG + LICENSE + Cargo metadata + tests. Examples, benches, docs, CI config, REPS.md, working notes are stripped.
+- Refreshed benchmark numbers in [docs/performance.md](docs/performance.md) against actually-measured 0.9.0 timings (~133 ns single-listener, ~244 ns 10-listener).
+
+### Changed
+- **Breaking — runtime-agnostic async, no tokio dep.** The `async` cargo feature no longer pulls in `tokio`. The library never imported tokio anyway; only the cargo feature wiring did. Consumers using the `async` feature with their own runtime (any executor that polls `std::future::Future` — tokio, async-std, smol, embassy, …) see no behavioral change. Consumers who were relying on tokio being a transitive dep of `mod-events` will need to add tokio to their own `[dependencies]`.
+- **Breaking — `DispatchResult::errors()` returns `&[ListenerError]`** instead of `Vec<&ListenerError>`. Iteration with `for err in result.errors()` and `for err in result.errors().iter()` is unchanged. Callers that did `.into_iter()` or assigned the return into a `Vec<&_>` will need to adapt.
+- **Performance: zero-allocation success path.** `DispatchResult` internal storage is now a `Vec<ListenerError>` (errors only) plus a `usize` listener count, instead of `Vec<Result<(), ListenerError>>` (one entry per listener). On the success path the Vec stays empty and `Vec::new()` does not allocate. A fully successful dispatch of N listeners now performs zero heap allocations for the result; failing dispatches allocate proportional to the failure count, not the listener count.
+- **Performance: `emit` skips result building entirely.** The fire-and-forget path no longer constructs a `DispatchResult` it then drops. Same panic-safety contract as `dispatch`; saves one `Vec` allocation per call after the first dispatch of a given event type.
+- `EventDispatcher::dispatch_async` documentation updated: confirms `catch_unwind` is now applied to every async listener (was previously documented as caller-responsibility).
+- `EventDispatcher::clear` documentation cross-references the new `clear_middleware`.
+
+### Removed
+- **`tokio` runtime dependency.** Was always a phantom dep — the library never imported it.
+- The "v0.3.0 backlog" stub in `.dev/ROADMAP.md` is superseded by the actual 0.9.0 work landed here.
+
+### Fixed
+- The internal `DispatchResult::new(Vec<Result<...>>)` constructor previously allocated a results vector for every dispatch, even on the success path. Now only allocates if at least one listener errors or panics. This is internal but observable as fewer allocations under profiling.
+
 ## [0.2.1] — 2026-05-03
 
 Patch release. CI hardening, security advisories cleared, MSRV bumped to keep the committed lockfile parseable. No public API changes from `0.2.0`. See the full release notes in [`docs/release/v0.2.1.md`](docs/release/v0.2.1.md).
@@ -100,7 +135,8 @@ Initial public preview of the event dispatcher.
 - Default features: `async`. Disable with `default-features = false` if you need a sync-only build.
 - MSRV is unspecified for this preview; see the roadmap for the planned pin.
 
-[Unreleased]: https://github.com/jamesgober/mod-events/compare/0.2.1...HEAD
+[Unreleased]: https://github.com/jamesgober/mod-events/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/jamesgober/mod-events/compare/0.2.1...0.9.0
 [0.2.1]: https://github.com/jamesgober/mod-events/compare/0.2.0...0.2.1
 [0.2.0]: https://github.com/jamesgober/mod-events/compare/0.1.0-beta...0.2.0
 [0.1.0-beta]: https://github.com/jamesgober/mod-events/releases/tag/0.1.0-beta

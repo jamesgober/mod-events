@@ -672,10 +672,10 @@ Enables async event handling support. On by default.
 
 ```toml
 [dependencies]
-mod-events = { version = "0.2.1", features = ["async"] }
+mod-events = { version = "0.9.0", features = ["async"] }
 
 # Disable to build sync-only:
-mod-events = { version = "0.2.1", default-features = false }
+mod-events = { version = "0.9.0", default-features = false }
 ```
 
 When enabled, provides:

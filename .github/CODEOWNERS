@@ -1,0 +1,8 @@
+# Repository code owners.
+#
+# GitHub uses this file to auto-request review from the listed owner
+# whenever a PR touches a matching path. The catch-all line covers the
+# whole tree; add narrower rules above it if you want different
+# reviewers per area.
+
+* @jamesgober

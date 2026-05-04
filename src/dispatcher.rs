@@ -1,5 +1,6 @@
 //! Main event dispatcher implementation
 
+use crate::error::panic_payload_to_listener_error;
 use crate::metrics::EventMetricsCounters;
 use crate::{
     DispatchResult, Event, EventMetadata, ListenerError, ListenerId, ListenerWrapper,
@@ -8,6 +9,7 @@ use crate::{
 use parking_lot::RwLock;
 use std::any::TypeId;
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -319,20 +321,53 @@ impl EventDispatcher {
 
         let type_id = TypeId::of::<T>();
         let listeners = self.listeners.read();
-        let mut results = Vec::new();
+
+        // Most dispatches succeed. `errors` stays empty (and
+        // unallocated — `Vec::new()` does not allocate) on the
+        // success path; we only push when a listener returns `Err`
+        // or panics.
+        let mut errors: Vec<ListenerError> = Vec::new();
+        let mut listener_count = 0_usize;
 
         if let Some(event_listeners) = listeners.get(&type_id) {
-            results.reserve(event_listeners.len());
             for listener in event_listeners {
-                results.push((listener.handler)(&event));
+                listener_count += 1;
+                // `catch_unwind` keeps a panicking listener from
+                // unwinding the dispatch thread (and the read lock we
+                // are holding above) into the caller. Panics are
+                // converted into the same `ListenerError` shape a
+                // well-behaved listener would have returned, so the
+                // caller's `DispatchResult::errors()` is the single
+                // place to look for failures. `parking_lot::RwLock`
+                // does not poison, so dropping the guard after a
+                // caught panic leaves the registry in a usable state.
+                match catch_unwind(AssertUnwindSafe(|| (listener.handler)(&event))) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => errors.push(err),
+                    Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
+                }
             }
         }
 
-        DispatchResult::new(results)
+        DispatchResult::new(listener_count, errors)
     }
 
     /// Dispatch an event asynchronously and await every async listener
     /// in priority order (requires the `async` feature).
+    ///
+    /// Listeners are awaited **sequentially** in descending priority
+    /// order. This preserves the priority contract — a high-priority
+    /// listener completes (or errors) before the next listener is
+    /// polled. Concurrent execution would lose ordering. If you want
+    /// true concurrent execution, drive `spawn` (e.g. `tokio::spawn`,
+    /// `async_std::task::spawn`) from inside each listener and return
+    /// `Ok(())` immediately.
+    ///
+    /// Each listener future is wrapped in `catch_unwind`, mirroring
+    /// the panic-safety guarantee of the sync [`Self::dispatch`]
+    /// path. A panic during `.await` becomes a `ListenerError` in
+    /// [`DispatchResult::errors`] with the prefix
+    /// `"listener panicked: "`. Subsequent listeners still run.
     ///
     /// Sync listeners registered via [`Self::on`] / [`Self::subscribe`]
     /// are not invoked here; only listeners registered through
@@ -394,12 +429,32 @@ impl EventDispatcher {
                 .unwrap_or_default()
         };
 
-        let mut results = Vec::with_capacity(handlers.len());
+        // Wrap each listener future in `catch_unwind` so a panicking
+        // listener becomes a `ListenerError` in `DispatchResult` rather
+        // than unwinding the dispatching task. Mirrors the panic-safety
+        // wrapping on the sync `dispatch` path.
+        //
+        // `AssertUnwindSafe` is required because the listener future
+        // closes over arbitrary user state that may not implement
+        // `UnwindSafe`. The contract is: if a listener panics, the
+        // dispatcher catches it and reports it; the listener author is
+        // responsible for not leaving captured state in a broken
+        // condition before panicking. Same contract as the sync path.
+        use futures_util::future::FutureExt;
+        use std::panic::AssertUnwindSafe;
+
+        // `errors` stays empty (and unallocated) on the success path.
+        let listener_count = handlers.len();
+        let mut errors: Vec<ListenerError> = Vec::new();
         for handler in handlers {
-            results.push(handler(&event).await);
+            match AssertUnwindSafe(handler(&event)).catch_unwind().await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => errors.push(err),
+                Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
+            }
         }
 
-        DispatchResult::new(results)
+        DispatchResult::new(listener_count, errors)
     }
 
     /// Fire and forget — dispatch without inspecting the result.
@@ -431,9 +486,27 @@ impl EventDispatcher {
     /// });
     /// ```
     pub fn emit<T: Event>(&self, event: T) {
-        // Intentional discard: emit is the documented fire-and-forget entry
-        // point. Callers that need per-listener outcomes use `dispatch`.
-        drop(self.dispatch(event));
+        // Update metrics
+        self.update_metrics(&event);
+
+        // Check middleware
+        if !self.check_middleware(&event) {
+            return;
+        }
+
+        let type_id = TypeId::of::<T>();
+        let listeners = self.listeners.read();
+
+        if let Some(event_listeners) = listeners.get(&type_id) {
+            for listener in event_listeners {
+                // Same panic-safety contract as `dispatch`, but the
+                // outcome is intentionally discarded. This avoids
+                // allocating the per-call result vector that `dispatch`
+                // returns — the documented win of `emit` over
+                // `dispatch` for fire-and-forget callers.
+                let _ = catch_unwind(AssertUnwindSafe(|| (listener.handler)(&event)));
+            }
+        }
     }
 
     /// Add middleware that can block events.
@@ -613,7 +686,9 @@ impl EventDispatcher {
 
     /// Drop every registered listener, both sync and async.
     ///
-    /// Middleware and accumulated metrics are unaffected.
+    /// Middleware and accumulated metrics are unaffected. Use
+    /// [`Self::clear_middleware`] if you also need to drop the
+    /// middleware chain.
     ///
     /// # Example
     ///
@@ -637,6 +712,15 @@ impl EventDispatcher {
 
         #[cfg(feature = "async")]
         self.async_listeners.write().clear();
+    }
+
+    /// Drop every registered middleware function.
+    ///
+    /// Listeners and accumulated metrics are unaffected. Useful in
+    /// test setup/teardown when you want to reset the middleware
+    /// chain between cases without rebuilding the dispatcher.
+    pub fn clear_middleware(&self) {
+        self.middleware.write().clear();
     }
 
     /// Hot-path metric update. Tries a read-only fast path first; only

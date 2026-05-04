@@ -16,47 +16,61 @@ mod-events is designed for high-performance scenarios. This guide covers perform
 - **Minimal allocations** - Pre-allocated vectors when possible
 - **Lock-free reads** - Multiple threads can read concurrently
 
-### Actual Benchmarks
+### Measured Throughput
 
-Based on our **real test results** on production hardware:
+Numbers measured against `mod-events 0.2.1` on a Windows x86_64 host
+(Rust 1.95, release profile) using the integration-test bench in
+`tests/benchmarks.rs`. These are **integration-test timings**, not
+formal `criterion` results — they have no warmup and no statistical
+analysis. They are useful as a sanity baseline, not as a published
+SLA. Roadmap item #31 tracks publishing authoritative `criterion`
+baselines from Linux CI.
 
-| Scenario | Latency | Throughput | Notes |
-|----------|---------|------------|-------|
-| Single listener | **~262 ns** | **~3.8M events/sec** | Criterion benchmark |
-| 10 listeners | **~344 ns** | **~2.9M events/sec** | Criterion benchmark |
-| Single listener (manual) | **~1.07 μs** | **~928K events/sec** | 10K events test |
-| 10 listeners (manual) | **~1.96 μs** | **~510K events/sec** | 1K events × 10 listeners |
-| Priority sorting | **One-time cost** | **At subscription** | Sorted once, O(1) dispatch |
-| Async dispatch | **~2-5 μs** | **~200K-500K events/sec** | Estimated |
+| Scenario | Per-event latency | Throughput | Notes |
+|----------|-------------------|------------|-------|
+| `emit` with 1 listener  | ~133 ns | ~7.5 M events/sec | 10,000-event loop, listener increments an `AtomicUsize`. |
+| `emit` with 10 listeners | ~244 ns | ~4.1 M events/sec | 1,000-event loop × 10 listeners (~24 ns per added listener). |
 
-### Performance Analysis
+Run them locally:
 
-**Key Insights:**
-- **Sub-microsecond dispatch** - Fastest measurements at 262ns
-- **Excellent scaling** - Only 31% overhead when adding 9 more listeners
-- **Consistent performance** - Low variance across measurements
-- **Memory efficient** - Zero additional allocations during dispatch
+```bash
+cargo test --release --test benchmarks --features async -- --nocapture
+```
 
-### Memory Usage
+For criterion microbenchmarks with warmup + statistical analysis:
 
-- **Dispatcher**: ~200 bytes base overhead
-- **Per listener**: ~100 bytes
-- **Per event type**: ~50 bytes for metrics
-- **During dispatch**: **Zero additional allocations**
+```bash
+cargo bench --features async --bench dispatch_benchmark
+```
+
+### Performance Properties
+
+- **Sub-microsecond dispatch** at the per-event level on commodity hardware.
+- **Linear scaling** with listener count — each additional sync listener costs roughly the cost of one indirect call plus the closure body.
+- **Lock-free dispatch path** for metrics: `AtomicU64` fetch-add per dispatch, no write lock on the metrics map after the first dispatch of a given event type.
+- **Read-only listener registry access** during dispatch: a single `parking_lot::RwLock::read` for the duration of the dispatch loop.
+- **O(n) subscribe** via `Vec::partition_point` + `Vec::insert`; FIFO is preserved within equal priority.
+
+### Memory Footprint
+
+- **Dispatcher**: ~200 bytes base overhead.
+- **Per listener**: one `Box<dyn Fn>` (16 bytes pointer + boxed closure size) plus ~16 bytes of metadata in `ListenerWrapper`.
+- **Per event type**: one `Arc<EventMetricsCounters>` containing an `AtomicU64`, a `Mutex<Instant>`, and a `&'static str` event name — about 64 bytes plus the `Arc` overhead.
+- **During dispatch**: zero allocations on the sync path. The async path clones the per-handler `Arc` for each listener, which is a refcount bump (no heap traffic).
 
 ## Optimization Tips
 
 ### 1. Use `emit()` for Fire-and-Forget
 
 ```rust
-// Fastest - no result checking (~262ns)
+// Fire-and-forget: discards the DispatchResult.
 dispatcher.emit(event);
 
-// Slower - builds result object (~1.07μs)
+// Returns DispatchResult; allocates a Vec<Result<(), ListenerError>>.
 let result = dispatcher.dispatch(event);
 ```
 
-**Performance Impact:** Using `emit()` is approximately **4x faster** than `dispatch()` for single listeners.
+`emit` calls `dispatch` internally and drops the result; the saving comes from not having to *use* the per-listener `Result` vector at the call site. If you do not inspect listener outcomes, prefer `emit` — it is also the documented entry point for that pattern.
 
 ### 2. Minimize Event Cloning
 

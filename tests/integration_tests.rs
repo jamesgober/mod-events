@@ -398,6 +398,99 @@ fn test_clear_drops_all_listeners() {
 }
 
 #[test]
+fn test_clear_middleware_does_not_affect_listeners_or_metrics() {
+    let dispatcher = EventDispatcher::new();
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+
+    // A middleware that blocks every event.
+    dispatcher.add_middleware(|_: &dyn Event| false);
+    let _id = dispatcher.on(move |_: &TestEvent| {
+        counter_clone.fetch_add(1, Ordering::SeqCst);
+    });
+
+    // Middleware blocks first dispatch.
+    let blocked = dispatcher.dispatch(TestEvent {
+        id: 1,
+        message: "blocked".to_string(),
+    });
+    assert!(blocked.is_blocked());
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+    // Drop only the middleware.
+    dispatcher.clear_middleware();
+
+    // Listener still registered, metric history preserved, but
+    // middleware no longer interferes.
+    let allowed = dispatcher.dispatch(TestEvent {
+        id: 2,
+        message: "allowed".to_string(),
+    });
+    assert!(allowed.all_succeeded());
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    assert_eq!(dispatcher.listener_count::<TestEvent>(), 1);
+
+    let snapshot = dispatcher.metrics();
+    let meta = snapshot
+        .get(&std::any::TypeId::of::<TestEvent>())
+        .expect("TestEvent metric should exist");
+    // 2 dispatches: one blocked, one allowed. update_metrics fires
+    // before the middleware check, so both count.
+    assert_eq!(meta.dispatch_count, 2);
+}
+
+#[test]
+fn test_dispatch_with_panicking_listener_collects_error_and_continues() {
+    let dispatcher = EventDispatcher::new();
+    let after_panic = Arc::new(AtomicUsize::new(0));
+    let after_panic_clone = after_panic.clone();
+
+    // High-priority panicker followed by a normal-priority listener.
+    // If the panic unwound the dispatch loop, the second listener
+    // would never run and the test would deadlock or crash.
+    let _bad = dispatcher.subscribe_with_priority(
+        |_: &TestEvent| -> Result<(), ListenerError> {
+            panic!("listener boom");
+        },
+        Priority::High,
+    );
+    let _good = dispatcher.on(move |_: &TestEvent| {
+        after_panic_clone.fetch_add(1, Ordering::SeqCst);
+    });
+
+    let result = dispatcher.dispatch(TestEvent {
+        id: 1,
+        message: "panic test".to_string(),
+    });
+
+    // The panicker contributes one Err; the second listener still ran.
+    assert_eq!(result.listener_count(), 2);
+    assert_eq!(result.success_count(), 1);
+    assert_eq!(result.error_count(), 1);
+    assert_eq!(after_panic.load(Ordering::SeqCst), 1);
+
+    let errors = result.errors();
+    let message = format!("{}", errors[0]);
+    assert!(
+        message.contains("listener panicked"),
+        "expected panic message to be wrapped, got: {message}"
+    );
+    assert!(
+        message.contains("listener boom"),
+        "expected panic detail to be preserved, got: {message}"
+    );
+
+    // Dispatcher is still usable for subsequent events.
+    let after = dispatcher.dispatch(TestEvent {
+        id: 2,
+        message: "after".to_string(),
+    });
+    assert_eq!(after.error_count(), 1);
+    assert_eq!(after.success_count(), 1);
+    assert_eq!(after_panic.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn test_subscribe_64_listeners_all_invoked_in_priority_order() {
     let dispatcher = EventDispatcher::new();
     let invocations = Arc::new(AtomicUsize::new(0));
@@ -552,5 +645,63 @@ mod async_tests {
             .await;
 
         assert_eq!(*order.lock().unwrap(), vec![2, 1]);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_async_with_panicking_listener_collects_error_and_continues() {
+        let dispatcher = EventDispatcher::new();
+        let after_panic = Arc::new(AtomicUsize::new(0));
+        let after_panic_clone = after_panic.clone();
+
+        // High-priority async panicker followed by a normal-priority
+        // listener. If the panic propagated through .await, the second
+        // listener would never run and the test would fail to advance.
+        let _bad = dispatcher.subscribe_async_with_priority(
+            |_: &TestEvent| async {
+                panic!("async listener boom");
+            },
+            Priority::High,
+        );
+        let _good = dispatcher.subscribe_async(move |_: &TestEvent| {
+            let after_panic = after_panic_clone.clone();
+            async move {
+                after_panic.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+
+        let result = dispatcher
+            .dispatch_async(TestEvent {
+                id: 1,
+                message: "async panic test".to_string(),
+            })
+            .await;
+
+        assert_eq!(result.listener_count(), 2);
+        assert_eq!(result.success_count(), 1);
+        assert_eq!(result.error_count(), 1);
+        assert_eq!(after_panic.load(Ordering::SeqCst), 1);
+
+        let errors = result.errors();
+        let message = format!("{}", errors[0]);
+        assert!(
+            message.contains("listener panicked"),
+            "expected panic message to be wrapped, got: {message}"
+        );
+        assert!(
+            message.contains("async listener boom"),
+            "expected panic detail to be preserved, got: {message}"
+        );
+
+        // Dispatcher remains usable for subsequent async events.
+        let after = dispatcher
+            .dispatch_async(TestEvent {
+                id: 2,
+                message: "after async panic".to_string(),
+            })
+            .await;
+        assert_eq!(after.error_count(), 1);
+        assert_eq!(after.success_count(), 1);
+        assert_eq!(after_panic.load(Ordering::SeqCst), 2);
     }
 }

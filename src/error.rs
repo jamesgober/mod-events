@@ -96,3 +96,28 @@ impl From<String> for ListenerError {
         Self::message(s)
     }
 }
+
+/// Convert a panic payload (the value carried out of a unwinding
+/// listener) into a [`ListenerError`].
+///
+/// `std::panic::catch_unwind` returns the panic payload as
+/// `Box<dyn Any + Send>`. The dispatcher uses this helper to turn that
+/// payload into the same `ListenerError` shape a well-behaved listener
+/// would have returned, so `DispatchResult::errors()` is the single
+/// place the caller has to look for failures — panics included.
+///
+/// Most panics carry a `&'static str` (from `panic!("…")`) or a
+/// `String` (from `panic!("{}", x)`); both are extracted directly.
+/// Anything else degrades to a generic `"listener panicked"` message.
+pub(crate) fn panic_payload_to_listener_error(
+    payload: Box<dyn std::any::Any + Send>,
+) -> ListenerError {
+    let detail = if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_owned()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        String::from("<non-string panic payload>")
+    };
+    ListenerError::message(format!("listener panicked: {detail}"))
+}

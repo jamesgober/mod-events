@@ -1,82 +1,99 @@
-//! Event dispatch result types
+//! Event dispatch result types.
 
 use crate::ListenerError;
 
-/// Result of event dispatch.
+/// Outcome of an event dispatch.
 ///
-/// Contains information about the success or failure of event dispatch,
-/// including any errors that occurred during listener execution.
+/// Carries the per-listener error list and aggregate counts. The
+/// internal representation is *lazy*: a `DispatchResult` for a fully
+/// successful dispatch holds an empty `Vec` (zero heap allocation
+/// — `Vec::new` does not allocate until first `push`). Allocation
+/// only happens when at least one listener returns `Err` or panics,
+/// keeping the success path allocation-free.
 #[derive(Debug)]
 #[must_use = "DispatchResult carries listener errors that will be silently dropped if ignored"]
 pub struct DispatchResult {
-    results: Vec<Result<(), ListenerError>>,
-    blocked: bool,
+    /// Number of listeners that ran. Includes both successes and
+    /// failures. Equal to `success_count + error_count` on the
+    /// non-blocked path; equal to `0` if `blocked == true`.
     listener_count: usize,
+    /// Errors produced by failing listeners, in dispatch order.
+    /// Stays empty (and unallocated) when every listener succeeds.
+    errors: Vec<ListenerError>,
+    /// `true` iff the dispatch was halted by middleware before any
+    /// listener ran.
+    blocked: bool,
 }
 
 impl DispatchResult {
-    pub(crate) fn new(results: Vec<Result<(), ListenerError>>) -> Self {
-        let listener_count = results.len();
+    /// Construct a result for a normal (non-blocked) dispatch.
+    pub(crate) fn new(listener_count: usize, errors: Vec<ListenerError>) -> Self {
         Self {
-            results,
-            blocked: false,
             listener_count,
+            errors,
+            blocked: false,
         }
     }
 
+    /// Construct a result for a dispatch that was halted by middleware.
     pub(crate) fn blocked() -> Self {
         Self {
-            results: Vec::new(),
-            blocked: true,
             listener_count: 0,
+            errors: Vec::new(),
+            blocked: false,
         }
+        .with_blocked()
     }
 
-    /// Check if the event was blocked by middleware.
+    fn with_blocked(mut self) -> Self {
+        self.blocked = true;
+        self
+    }
+
+    /// Whether the dispatch was halted by middleware.
     #[must_use]
     pub fn is_blocked(&self) -> bool {
         self.blocked
     }
 
-    /// Get the total number of listeners that were called.
+    /// Total number of listeners invoked (successes + failures).
+    /// Returns `0` when the dispatch was blocked.
     #[must_use]
     pub fn listener_count(&self) -> usize {
         self.listener_count
     }
 
-    /// Get the number of successful handlers.
+    /// Number of listeners that returned `Ok(())` (or completed
+    /// without panicking).
     #[must_use]
     pub fn success_count(&self) -> usize {
-        self.results.iter().filter(|r| r.is_ok()).count()
+        self.listener_count.saturating_sub(self.errors.len())
     }
 
-    /// Get the number of failed handlers.
+    /// Number of listeners that returned `Err(_)` or panicked. A
+    /// panicking listener contributes one error with the message
+    /// prefix `"listener panicked: "`.
     #[must_use]
     pub fn error_count(&self) -> usize {
-        self.results.iter().filter(|r| r.is_err()).count()
+        self.errors.len()
     }
 
     /// Borrow every error produced by failing listeners, in dispatch order.
     #[must_use]
-    pub fn errors(&self) -> Vec<&ListenerError> {
-        self.results
-            .iter()
-            .filter_map(|r| r.as_ref().err())
-            .collect()
+    pub fn errors(&self) -> &[ListenerError] {
+        &self.errors
     }
 
-    /// Check if all handlers succeeded.
-    ///
-    /// Returns `false` if any listener errored or if the event was
-    /// blocked by middleware.
+    /// `true` iff the dispatch was not blocked and every listener
+    /// returned `Ok(())`.
     #[must_use]
     pub fn all_succeeded(&self) -> bool {
-        !self.blocked && self.results.iter().all(|r| r.is_ok())
+        !self.blocked && self.errors.is_empty()
     }
 
-    /// Check if any handlers failed.
+    /// `true` iff at least one listener returned `Err(_)` or panicked.
     #[must_use]
     pub fn has_errors(&self) -> bool {
-        self.results.iter().any(|r| r.is_err())
+        !self.errors.is_empty()
     }
 }

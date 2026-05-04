@@ -61,13 +61,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mod-events = "0.2.1"
+mod-events = "0.9.0"
 
 # For async support (default)
-mod-events = { version = "0.2.1", features = ["async"] }
+mod-events = { version = "0.9.0", features = ["async"] }
 
 # Sync-only build
-mod-events = { version = "0.2.1", default-features = false }
+mod-events = { version = "0.9.0", default-features = false }
 ```
 
 MSRV: Rust 1.81.
@@ -196,6 +196,8 @@ cargo test --release benchmark
 
 - [Quick Start Guide](docs/quick-start.md)
 - [API Reference](docs/api-reference.md)
+- [Architecture &amp; Design Rationale](docs/architecture.md)
+- [Comparison vs. Alternatives](docs/comparison.md)
 - [Performance Guide](docs/performance.md)
 - [Examples](docs/examples.md)
 - [Best Practices](docs/best-practices.md)
