@@ -121,7 +121,7 @@ tokio = { version = "1", features = ["full"] }
 # why: criterion drives `benches/dispatch_benchmark.rs`. Required by REPS
 # §Testing for performance-sensitive code paths. Dev-only, so a caret on
 # the minor version is acceptable.
-criterion = "0.5"
+criterion = "0.8"
 
 # why: model-checks the dispatcher's double-checked-locking pattern in
 # `tests/loom_concurrent.rs`. The actual dispatcher uses
