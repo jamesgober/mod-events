@@ -42,7 +42,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # `dtolnay/rust-toolchain@stable` installs the stable channel,
       # but `rust-toolchain.toml` in the workspace overrides cargo to
@@ -100,7 +100,7 @@ jobs:
     name: msrv (1.81)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.81.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -116,7 +116,7 @@ jobs:
     name: cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -125,7 +125,7 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check all
@@ -139,7 +139,7 @@ jobs:
     name: loom (concurrency model check)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -168,7 +168,7 @@ jobs:
       RUSTFLAGS: -Z sanitizer=address
       ASAN_OPTIONS: detect_stack_use_after_return=1:detect_leaks=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
@@ -196,7 +196,7 @@ jobs:
     name: criterion benches
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
