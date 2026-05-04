@@ -196,7 +196,7 @@ jobs:
       - name: run benchmarks
         run: cargo bench --features async --bench dispatch_benchmark
       - name: upload report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: criterion-report
           path: target/criterion
