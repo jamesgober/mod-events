@@ -60,3 +60,27 @@ updates:
     commit-message:
       prefix: "ci"
       include: scope
+    groups:
+      # All GitHub-published actions (`actions/*`) move on the same
+      # cadence and are usually safe to bump together. This collapses
+      # what would otherwise be one PR per action (checkout +
+      # upload-artifact + cache + …) into a single PR per dependabot
+      # cycle. Major-version bumps still get their own PR per action
+      # so a breaking change isn't hidden in a group.
+      github-published-actions:
+        patterns:
+          - "actions/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Other action publishers grouped separately so a security
+      # advisory on one publisher doesn't get hidden in a 10-action
+      # bump PR.
+      third-party-actions:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "actions/*"
+        update-types:
+          - "minor"
+          - "patch"
