@@ -6,6 +6,12 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Fixed
+- **CI: musl target no longer fails at clippy with `error[E0463]: can't find crate for 'core'`.** The `dtolnay/rust-toolchain@stable` action installs the stable channel, but `rust-toolchain.toml` redirects cargo to `1.95.0`; targets installed via the action's `targets:` parameter were attached to stable, not to the channel that cargo actually used. Targets are now added via an explicit `rustup target add` step that runs in the workspace, where rustup honours `rust-toolchain.toml`. Affects the `check / ubuntu-x86_64-musl` job in CI; the local development experience is unchanged.
+
+### Changed
+- Dependabot's `github-actions` ecosystem now groups minor + patch updates from `actions/*` (the GitHub-published actions) and from third-party publishers separately. Major-version bumps still get their own PR per action so breaking changes are not hidden in a group. Cuts the per-cycle PR count from one-per-action to roughly two.
+
 ## [0.9.0] — 2026-05-03
 
 Release-candidate-style minor for `1.0`. Re-engineered the dispatcher around three goals: panic safety on every path, zero-allocation success path, and runtime-agnostic async. Verified with a property-test suite, an expanded cross-platform CI matrix (Linux x86_64 + ARM64 + musl, macOS ARM64, Windows x86_64), nightly AddressSanitizer, and `loom` model checking of the only non-trivial concurrency pattern in the crate. See the full release notes in [`docs/release/v0.9.0.md`](docs/release/v0.9.0.md).
