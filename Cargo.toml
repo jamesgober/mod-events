@@ -95,7 +95,7 @@ harness = false
 # `Mutex<Instant>` last-dispatch timestamp. Critical hot-path dependency
 # — REPS §Dependency Management requires exact pins for critical crates,
 # so this is `=0.12.4` rather than a caret range.
-parking_lot = "=0.12.4"
+parking_lot = "=0.12.5"
 
 # why: provides `FutureExt::catch_unwind` for panic-safety on the async
 # dispatch path (mirrors the `std::panic::catch_unwind` wrapping the
