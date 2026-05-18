@@ -86,6 +86,18 @@ impl ListenerWrapper {
                 if let Some(concrete_event) = event.as_any().downcast_ref::<T>() {
                     listener(concrete_event)
                 } else {
+                    // The dispatcher's `TypeId`-keyed listener registry
+                    // makes this branch unreachable: a listener
+                    // registered for `T` only ever receives events of
+                    // type `T`. The branch exists to satisfy the
+                    // closure's return type; if it ever fires the
+                    // dispatcher routing has a bug. Promotes to a
+                    // panic in debug builds; silently returns `Ok`
+                    // in release to preserve the no-panic contract.
+                    debug_assert!(
+                        false,
+                        "ListenerWrapper received event of wrong type — dispatcher routing bug"
+                    );
                     Ok(())
                 }
             }),

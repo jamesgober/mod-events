@@ -1,18 +1,19 @@
-//! Middleware system for event processing
+//! Middleware system for event processing.
+//!
+//! This module is `pub(crate)` for the 1.x line. Callers register
+//! middleware through [`crate::EventDispatcher::add_middleware`] and
+//! drop it through [`crate::EventDispatcher::clear_middleware`];
+//! the internal manager type and its function-alias type are not part
+//! of the public surface.
 
 use crate::Event;
 
-/// Middleware function type
-///
-/// Middleware functions receive an event and return `true` to allow
-/// the event to continue processing, or `false` to block it.
-pub type MiddlewareFunction = Box<dyn Fn(&dyn Event) -> bool + Send + Sync>;
+/// Middleware function type stored internally by the dispatcher.
+pub(crate) type MiddlewareFunction = Box<dyn Fn(&dyn Event) -> bool + Send + Sync>;
 
-/// Middleware manager for event processing
-///
-/// Middleware allows you to intercept events before they reach listeners.
-/// This is useful for logging, filtering, or transforming events.
-pub struct MiddlewareManager {
+/// Middleware manager — internal storage backing
+/// [`crate::EventDispatcher::add_middleware`] and friends.
+pub(crate) struct MiddlewareManager {
     middleware: Vec<MiddlewareFunction>,
 }
 
@@ -31,38 +32,31 @@ impl Default for MiddlewareManager {
 }
 
 impl MiddlewareManager {
-    /// Create a new middleware manager
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             middleware: Vec::new(),
         }
     }
 
-    /// Add middleware to the chain
-    ///
-    /// Middleware is executed in the order it was added.
-    /// If any middleware returns `false`, the event is blocked.
-    pub fn add<F>(&mut self, middleware: F)
+    /// Add middleware to the chain. Middleware is executed in
+    /// registration order; if any middleware returns `false` the
+    /// event is blocked.
+    pub(crate) fn add<F>(&mut self, middleware: F)
     where
         F: Fn(&dyn Event) -> bool + Send + Sync + 'static,
     {
         self.middleware.push(Box::new(middleware));
     }
 
-    /// Process an event through all middleware
-    ///
-    /// Returns `true` if the event should continue, `false` if blocked.
-    pub fn process(&self, event: &dyn Event) -> bool {
+    /// Process an event through every middleware. Returns `true` if
+    /// the event should continue, `false` if blocked.
+    #[inline]
+    pub(crate) fn process(&self, event: &dyn Event) -> bool {
         self.middleware.iter().all(|m| m(event))
     }
 
-    /// Get the number of middleware functions
-    pub fn count(&self) -> usize {
-        self.middleware.len()
-    }
-
-    /// Clear all middleware
-    pub fn clear(&mut self) {
+    /// Drop every registered middleware.
+    pub(crate) fn clear(&mut self) {
         self.middleware.clear();
     }
 }

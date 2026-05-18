@@ -88,6 +88,14 @@ impl AsyncListenerWrapper {
                 if let Some(concrete_event) = event.as_any().downcast_ref::<T>() {
                     Box::pin(listener(concrete_event))
                 } else {
+                    // Unreachable in practice — the dispatcher's
+                    // `TypeId`-keyed registry guarantees only matching
+                    // events reach this wrapper. See the matching
+                    // comment in `ListenerWrapper::new`.
+                    debug_assert!(
+                        false,
+                        "AsyncListenerWrapper received event of wrong type — dispatcher routing bug"
+                    );
                     Box::pin(async { Ok(()) })
                 }
             }),

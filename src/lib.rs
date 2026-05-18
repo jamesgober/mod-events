@@ -67,6 +67,7 @@ mod metrics;
 mod middleware;
 mod priority;
 mod result;
+mod type_id_map;
 
 #[cfg(feature = "async")]
 mod async_support;
@@ -76,7 +77,6 @@ pub use dispatcher::*;
 pub use error::*;
 pub use listener::*;
 pub use metrics::*;
-pub use middleware::*;
 pub use priority::*;
 pub use result::*;
 

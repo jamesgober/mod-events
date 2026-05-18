@@ -61,13 +61,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mod-events = "0.9.0"
+mod-events = "1.0.0"
 
 # For async support (default)
-mod-events = { version = "0.9.0", features = ["async"] }
+mod-events = { version = "1.0.0", features = ["async"] }
 
 # Sync-only build
-mod-events = { version = "0.9.0", default-features = false }
+mod-events = { version = "1.0.0", default-features = false }
 ```
 
 MSRV: Rust 1.81.

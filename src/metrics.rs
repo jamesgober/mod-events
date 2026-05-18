@@ -42,6 +42,7 @@ impl EventMetricsCounters {
         }
     }
 
+    #[inline]
     pub(crate) fn record_dispatch(&self) {
         let _previous = self.dispatch_count.fetch_add(1, Ordering::Relaxed);
         *self.last_dispatch.lock() = Instant::now();
@@ -66,7 +67,14 @@ impl EventMetricsCounters {
 /// Returned by [`crate::EventDispatcher::metrics`]. Each field reflects
 /// the value at the moment the snapshot was taken; subsequent dispatches
 /// do not mutate it.
+///
+/// Marked `#[non_exhaustive]` so future minor releases may add metric
+/// fields (e.g. error counts, percentile latencies) without breaking
+/// existing callers. External code must read fields by name, never
+/// construct `EventMetadata` via struct-literal syntax. The struct is
+/// only produced inside the crate.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EventMetadata {
     /// Fully qualified name of the event type, as reported by
     /// [`std::any::type_name`].

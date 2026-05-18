@@ -6,8 +6,57 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-18
+
+Stable API. The public surface is locked under SemVer for the entire `1.x` line — see [`docs/STABILITY.md`](docs/STABILITY.md) for the binding policy and [`docs/API-FREEZE-AUDIT.md`](docs/API-FREEZE-AUDIT.md) for the full surface manifest. Ships with a performance tune over `0.9.x` (criterion shows ~33-38% faster on the `emit` path) and three small breaking cleanups at the freeze boundary that tighten dead surface. See the full release notes in [`docs/release/v1.0.0.md`](docs/release/v1.0.0.md).
+
+### Added
+
+- **`docs/STABILITY.md`** — formal SemVer / panic-safety / determinism / deprecation / dependency / MSRV policy for the `1.x` line. Every public symbol listed in `docs/API-FREEZE-AUDIT.md` is locked under it.
+- **`docs/API-FREEZE-AUDIT.md`** — manifest of every public symbol in `1.0.0`, what trait impls it carries, what is `pub(crate)`, what is intentionally out of scope, and the surface totals diff from `0.9.x`.
+- **Internal `TypeIdHasher` for the three `TypeId`-keyed dispatcher maps** (`listeners`, `async_listeners`, `metrics`). `TypeId` is already a well-distributed hash value; passing it through `std::collections::HashMap`'s default `SipHasher13` was wasted work. The new no-op hasher in [`src/type_id_map.rs`](src/type_id_map.rs) lives `pub(crate)` and is the headline contributor to the dispatch speedup below. Public surface is unchanged — `EventDispatcher::metrics()` still returns a plain `HashMap<TypeId, EventMetadata>` built from the internal `TypeIdMap` at snapshot time.
+- **Async-path criterion benchmarks** in `benches/dispatch_benchmark.rs`: `dispatch_async_single_listener` (~158 ns), `dispatch_async_ten_listeners` (~520 ns), and a sync-path `dispatch_with_result` (~93 ns) for completeness. Requires the `async_tokio` feature on the `criterion` dev-dep, which is now enabled.
+- **`debug_assert!` guards on the unreachable downcast `else` branch** in both `ListenerWrapper::new` and `AsyncListenerWrapper::new`. The dispatcher's `TypeId`-keyed routing makes those branches unreachable in correct code; the assert promotes any future routing bug to an immediate panic in debug builds while still satisfying the closure's return type in release.
+- Doc note on `Event::type_id` explaining its relationship to `Any::type_id` (they are equivalent; the trait method exists for ergonomics when working with `&dyn Event` trait objects).
+- Doc note on `Event::event_name` documenting that `std::any::type_name`'s output is **not stable** across compiler versions. Treat the result as opaque human-readable text.
+
+### Changed
+
+- **Breaking — `MiddlewareManager` moved to `pub(crate)`.** Never useful as a public type — users always go through `EventDispatcher::add_middleware` and `clear_middleware`. Locking it under SemVer in 1.0 would have frozen dead surface. The dispatcher's public middleware methods are unchanged.
+- **Breaking — `MiddlewareFunction` type alias moved to `pub(crate)`.** Same rationale; never useful externally.
+- **Breaking — `Priority` is now `#[non_exhaustive]`.** External `match` statements that enumerate every variant must add a `_ => …` arm. Future minor releases may add new priority variants without breaking SemVer.
+- **Breaking — `EventMetadata` is now `#[non_exhaustive]`.** External code must read fields by name, never construct via struct-literal syntax. Future minor releases may add new metric fields (e.g. percentile latencies, error counts) without breaking SemVer. The only way to obtain an `EventMetadata` is `EventDispatcher::metrics()`, so no in-practice construction site exists.
+- **Performance — outer `Arc<RwLock<...>>` wrappers stripped from `EventDispatcher` fields.** The dispatcher owns its `listeners`, `async_listeners`, `metrics`, and `middleware` exclusively; the `Arc` indirection added a pointer-chase per access for no gain. Each field is now a plain `RwLock<...>` over the internal `TypeIdMap`.
+- **Performance — `#[inline]` annotations** on `EventDispatcher::update_metrics`, `EventDispatcher::counters_for`, `EventDispatcher::check_middleware`, `EventMetricsCounters::record_dispatch`, and `MiddlewareManager::process`. Lets LLVM inline across module boundaries even without LTO.
+- Criterion measurements (Windows x86_64, Ryzen 9 9950X3D) reflect the perf tune: `emit` with 1 listener went from ~133 ns (`0.9.x` integration-test bench) to **~89.8 ns** (criterion, this release). `emit` with 10 listeners went from ~244 ns to **~150 ns**. ~33-38% faster on the documented hot path. Methodology differed between the two measurements (integration bench vs criterion), but the trend is real and reproducible.
+
+### Removed
+
+- `MiddlewareManager` from the public crate surface (moved to `pub(crate)`).
+- `MiddlewareFunction` from the public crate surface (moved to `pub(crate)`).
+- `pub use middleware::*;` from `src/lib.rs` (was wildcard-re-exporting both items above).
+
+### Documentation
+
+- `README.md` install snippets bumped to `1.0.0`.
+- `docs/performance.md` table replaced with `1.0.0` criterion numbers and a brief note on the perf-tune contributors.
+
+### Compatibility
+
+- MSRV stays at Rust `1.81`. No bump.
+- The two runtime dependencies (`parking_lot` exact-pinned to `=0.12.4`, optional `futures-util` for the async path) are unchanged. No new runtime deps.
+- The `async` cargo feature stays on by default.
+- Local matrix: `cargo build` (default), `cargo build --no-default-features`, `cargo build --all-features`, `cargo +1.81 build --all-features`, `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings`, `cargo doc --all-features --no-deps` under `RUSTDOCFLAGS="-D warnings"`, and `cargo test --all-features` (**74 tests pass — 55 + 19 doctests**) all green.
+
+## [0.9.1] — 2026-05-18
+
+Patch release. CI hardening, Dependabot tuning, and three documentation drift fixes carried into `docs/performance.md` from the `0.9.0` work. No public API changes from `0.9.0`. See the full release notes in [`docs/release/v0.9.1.md`](docs/release/v0.9.1.md).
+
 ### Fixed
 - **CI: musl target no longer fails at clippy with `error[E0463]: can't find crate for 'core'`.** The `dtolnay/rust-toolchain@stable` action installs the stable channel, but `rust-toolchain.toml` redirects cargo to `1.95.0`; targets installed via the action's `targets:` parameter were attached to stable, not to the channel that cargo actually used. Targets are now added via an explicit `rustup target add` step that runs in the workspace, where rustup honours `rust-toolchain.toml`. Affects the `check / ubuntu-x86_64-musl` job in CI; the local development experience is unchanged.
+- `docs/performance.md` benchmark version label corrected from `mod-events 0.2.1` to `mod-events 0.9.0`. The numbers themselves were already refreshed in `0.9.0`; only the text label lagged behind.
+- `docs/performance.md` "Pre-allocated vectors when possible" claim removed. The `0.9.0` rewrite of `DispatchResult` made the success path zero-allocation (the internal `Vec<ListenerError>` stays empty and `Vec::new()` does not allocate). Text now reads "Zero-allocation success path".
+- `docs/performance.md` "emit calls dispatch internally and drops the result" claim corrected. As of `0.9.0`, `emit` skips result building entirely — it does not call `dispatch`. Text rewritten to describe the actual behavior.
 
 ### Changed
 - Dependabot's `github-actions` ecosystem now groups minor + patch updates from `actions/*` (the GitHub-published actions) and from third-party publishers separately. Major-version bumps still get their own PR per action so breaking changes are not hidden in a group. Cuts the per-cycle PR count from one-per-action to roughly two.
@@ -143,7 +192,9 @@ Initial public preview of the event dispatcher.
 - Default features: `async`. Disable with `default-features = false` if you need a sync-only build.
 - MSRV is unspecified for this preview; see the roadmap for the planned pin.
 
-[Unreleased]: https://github.com/jamesgober/mod-events/compare/0.9.0...HEAD
+[Unreleased]: https://github.com/jamesgober/mod-events/compare/1.0.0...HEAD
+[1.0.0]: https://github.com/jamesgober/mod-events/compare/0.9.1...1.0.0
+[0.9.1]: https://github.com/jamesgober/mod-events/compare/0.9.0...0.9.1
 [0.9.0]: https://github.com/jamesgober/mod-events/compare/0.2.1...0.9.0
 [0.2.1]: https://github.com/jamesgober/mod-events/compare/0.2.0...0.2.1
 [0.2.0]: https://github.com/jamesgober/mod-events/compare/0.1.0-beta...0.2.0

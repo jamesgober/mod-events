@@ -36,6 +36,7 @@
 /// }, Priority::Normal);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[non_exhaustive]
 pub enum Priority {
     /// Lowest priority (0)
     Lowest = 0,

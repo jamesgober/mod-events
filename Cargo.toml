@@ -7,16 +7,16 @@
 # ===================================================
 [package]
 name = "mod-events"
-# 0.9.0 (2026-05-03) — release-candidate-style minor for 1.0. Drops
-# the optional tokio runtime dep (the lib is fully runtime-agnostic),
-# adds `catch_unwind` to the async dispatch path (mirrors the sync
-# panic safety), refactors `DispatchResult` to a lazy errors `Vec`
-# (zero allocation on the success path), splits `emit` from `dispatch`
-# so fire-and-forget skips the result vector entirely, adds a
-# `proptest` property suite, expands CI to cross-platform ARM + musl
-# matrix, runs nightly AddressSanitizer, and runs criterion in CI.
-# Adds `EventDispatcher::clear_middleware()`. See CHANGELOG.md `[0.9.0]`.
-version = "0.9.0"
+# 1.0.0 (2026-05-18) — stable API. Public surface frozen under
+# SemVer for the entire 1.x line. Includes a perf tune over 0.9.x:
+# internal TypeIdHasher skips SipHash on the hot path, outer
+# `Arc<RwLock<...>>` wrappers stripped, hot-path functions
+# carry #[inline]. Criterion: ~90 ns single-listener emit (was
+# ~133 ns in 0.9.x). MiddlewareManager/MiddlewareFunction moved to
+# `pub(crate)`. Priority and EventMetadata gained
+# `#[non_exhaustive]` for forward-compat. See docs/STABILITY.md and
+# CHANGELOG.md `[1.0.0]`.
+version = "1.0.0"
 edition = "2021"
 # MSRV. Bumped from 1.75 → 1.81 because Cargo lockfile format v4
 # (default since Rust 1.78) cannot be parsed by older toolchains. CI's
@@ -120,8 +120,9 @@ tokio = { version = "1", features = ["full"] }
 
 # why: criterion drives `benches/dispatch_benchmark.rs`. Required by REPS
 # §Testing for performance-sensitive code paths. Dev-only, so a caret on
-# the minor version is acceptable.
-criterion = "0.5"
+# the minor version is acceptable. `async_tokio` feature gates the
+# `Bencher::to_async` adapter used by `bench_dispatch_async_*` targets.
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 # why: model-checks the dispatcher's double-checked-locking pattern in
 # `tests/loom_concurrent.rs`. The actual dispatcher uses

@@ -26,15 +26,29 @@ use std::fmt;
 /// }
 /// ```
 pub trait Event: Any + Send + Sync + fmt::Debug {
-    /// Returns the event as Any for downcasting
+    /// Returns the event as [`Any`] for downcasting.
     fn as_any(&self) -> &dyn Any;
 
-    /// Returns a unique identifier for this event type
+    /// Returns the unique [`TypeId`] identifier for this event type.
+    ///
+    /// Equivalent to `<Self as Any>::type_id(self)` since `Event`
+    /// requires the [`Any`] supertrait. Both methods are available and
+    /// return identical values; this one is provided for ergonomics
+    /// when working with `&dyn Event` trait objects, where the
+    /// supertrait method requires a `&dyn Any` cast first.
     fn type_id(&self) -> TypeId {
         TypeId::of::<Self>()
     }
 
-    /// Returns the event name for debugging
+    /// Returns the event name for debugging / logging.
+    ///
+    /// Backed by [`std::any::type_name`]. The exact format is
+    /// **not stable** across compiler versions — the Rust standard
+    /// library reserves the right to change `type_name` output
+    /// between releases. Treat the result as opaque human-readable
+    /// text. Do not parse it, persist it, or use it as a stable
+    /// cross-process identifier; use [`Event::type_id`] for that
+    /// instead.
     fn event_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }

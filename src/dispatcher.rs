@@ -2,9 +2,10 @@
 
 use crate::error::panic_payload_to_listener_error;
 use crate::metrics::EventMetricsCounters;
+use crate::middleware::MiddlewareManager;
+use crate::type_id_map::TypeIdMap;
 use crate::{
-    DispatchResult, Event, EventMetadata, ListenerError, ListenerId, ListenerWrapper,
-    MiddlewareManager, Priority,
+    DispatchResult, Event, EventMetadata, ListenerError, ListenerId, ListenerWrapper, Priority,
 };
 use parking_lot::RwLock;
 use std::any::TypeId;
@@ -51,15 +52,15 @@ type AsyncHandler = Arc<dyn for<'a> Fn(&'a dyn Event) -> AsyncEventResult<'a> + 
 /// });
 /// ```
 pub struct EventDispatcher {
-    listeners: Arc<RwLock<HashMap<TypeId, Vec<ListenerWrapper>>>>,
+    listeners: RwLock<TypeIdMap<Vec<ListenerWrapper>>>,
     #[cfg(feature = "async")]
-    async_listeners: Arc<RwLock<HashMap<TypeId, Vec<AsyncListenerWrapper>>>>,
+    async_listeners: RwLock<TypeIdMap<Vec<AsyncListenerWrapper>>>,
     next_id: AtomicUsize,
     // Per-event-type counters live behind an `Arc` so the dispatch hot
     // path can clone the counter pointer under a read lock and increment
     // its atomics without ever touching the outer map's write lock.
-    metrics: Arc<RwLock<HashMap<TypeId, Arc<EventMetricsCounters>>>>,
-    middleware: Arc<RwLock<MiddlewareManager>>,
+    metrics: RwLock<TypeIdMap<Arc<EventMetricsCounters>>>,
+    middleware: RwLock<MiddlewareManager>,
 }
 
 impl EventDispatcher {
@@ -67,12 +68,12 @@ impl EventDispatcher {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            listeners: Arc::new(RwLock::new(HashMap::new())),
+            listeners: RwLock::new(TypeIdMap::default()),
             #[cfg(feature = "async")]
-            async_listeners: Arc::new(RwLock::new(HashMap::new())),
+            async_listeners: RwLock::new(TypeIdMap::default()),
             next_id: AtomicUsize::new(0),
-            metrics: Arc::new(RwLock::new(HashMap::new())),
-            middleware: Arc::new(RwLock::new(MiddlewareManager::new())),
+            metrics: RwLock::new(TypeIdMap::default()),
+            middleware: RwLock::new(MiddlewareManager::new()),
         }
     }
 
@@ -725,6 +726,7 @@ impl EventDispatcher {
 
     /// Hot-path metric update. Tries a read-only fast path first; only
     /// promotes to a write lock if the entry doesn't exist yet.
+    #[inline]
     fn update_metrics<T: Event>(&self, _event: &T) {
         let counters = self.counters_for::<T>();
         counters.record_dispatch();
@@ -733,6 +735,7 @@ impl EventDispatcher {
     /// Look up (or create) the per-type counters. The fast path holds
     /// only a read lock; the slow path promotes to a write lock and
     /// double-checks the entry to avoid a torn-creation race.
+    #[inline]
     fn counters_for<T: Event + 'static>(&self) -> Arc<EventMetricsCounters> {
         let type_id = TypeId::of::<T>();
 
@@ -748,6 +751,7 @@ impl EventDispatcher {
         )
     }
 
+    #[inline]
     fn check_middleware(&self, event: &dyn Event) -> bool {
         self.middleware.read().process(event)
     }

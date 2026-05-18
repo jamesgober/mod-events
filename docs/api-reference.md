@@ -530,9 +530,10 @@ if result.has_errors() {
 }
 ```
 
-##### `errors(&self) -> Vec<&ListenerError>`
+##### `errors(&self) -> &[ListenerError]`
 
 Borrow every error produced by failing listeners, in dispatch order.
+The returned slice is empty when every listener succeeded.
 
 ```rust
 for error in result.errors() {

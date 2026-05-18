@@ -11,36 +11,54 @@ mod-events is designed for high-performance scenarios. This guide covers perform
 
 ### Zero-Cost Abstractions
 
-- **Compile-time type safety** - No runtime type checking
-- **Direct function calls** - No virtual dispatch overhead
-- **Minimal allocations** - Pre-allocated vectors when possible
+- **Compile-time type safety** - No runtime type checking.
+- **Direct function calls** - No virtual dispatch overhead beyond the
+  one `Box<dyn Fn>` indirection per listener.
+- **Zero-allocation success path** - `DispatchResult`'s internal
+  `Vec<ListenerError>` is constructed empty (`Vec::new()` does not
+  allocate). Allocation happens only when a listener returns `Err` or
+  panics; a fully-successful dispatch performs zero heap allocations
+  for the result.
 - **Lock-free reads** - Multiple threads can read concurrently
+  through `parking_lot::RwLock::read`.
 
 ### Measured Throughput
 
-Numbers measured against `mod-events 0.2.1` on a Windows x86_64 host
-(Rust 1.95, release profile) using the integration-test bench in
-`tests/benchmarks.rs`. These are **integration-test timings**, not
-formal `criterion` results — they have no warmup and no statistical
-analysis. They are useful as a sanity baseline, not as a published
-SLA. Roadmap item #31 tracks publishing authoritative `criterion`
-baselines from Linux CI.
+Numbers measured against `mod-events 1.0.0` on a Windows x86_64 host
+(Ryzen 9 9950X3D, Rust 1.95, release profile) using
+`cargo bench --bench dispatch_benchmark --features async`. Criterion
+warm-up + statistical analysis applied; the median of the reported
+3-point estimate is shown.
 
 | Scenario | Per-event latency | Throughput | Notes |
 |----------|-------------------|------------|-------|
-| `emit` with 1 listener  | ~133 ns | ~7.5 M events/sec | 10,000-event loop, listener increments an `AtomicUsize`. |
-| `emit` with 10 listeners | ~244 ns | ~4.1 M events/sec | 1,000-event loop × 10 listeners (~24 ns per added listener). |
+| `emit` with 1 listener   | **~89.8 ns** | **~11.1 M events/sec** | Fire-and-forget path; success-path skips result construction entirely. |
+| `emit` with 10 listeners | **~150 ns**  | **~6.7 M events/sec** | ~6 ns per added listener after the first. |
+| `dispatch` with 1 listener | **~92.6 ns** | **~10.8 M events/sec** | `dispatch` builds a `DispatchResult` (empty `Vec<ListenerError>`) on success. ~3 ns more than `emit`. |
+| `dispatch_async` with 1 async listener   | **~158 ns** | **~6.3 M events/sec** | Tokio current-thread runtime; one `catch_unwind` future per listener. |
+| `dispatch_async` with 10 async listeners | **~520 ns** | **~1.9 M events/sec** | ~40 ns per added async listener. |
 
-Run them locally:
+These numbers reflect the `1.0.0` performance tune: an internal
+`TypeIdHasher` skips the SipHash round on the hot path, the
+dispatcher's three lookup maps shed an outer `Arc` wrapper, and the
+metric-update + middleware-check helpers carry `#[inline]`. The
+combined effect on the `emit` path is roughly **33-38% faster than
+the `0.9.x` numbers** (which were ~133 ns single / ~244 ns
+ten-listener using an integration-test bench without warmup —
+methodology differed, but the trend is real and reproducible under
+criterion).
 
-```bash
-cargo test --release --test benchmarks --features async -- --nocapture
-```
-
-For criterion microbenchmarks with warmup + statistical analysis:
+Run criterion microbenchmarks locally:
 
 ```bash
 cargo bench --features async --bench dispatch_benchmark
+```
+
+Run the legacy integration-test bench (no warmup, no statistical
+analysis) for a quick smoke test:
+
+```bash
+cargo test --release --test benchmarks --features async -- --nocapture
 ```
 
 ### Performance Properties
@@ -63,14 +81,14 @@ cargo bench --features async --bench dispatch_benchmark
 ### 1. Use `emit()` for Fire-and-Forget
 
 ```rust
-// Fire-and-forget: discards the DispatchResult.
+// Fire-and-forget: no result is constructed.
 dispatcher.emit(event);
 
-// Returns DispatchResult; allocates a Vec<Result<(), ListenerError>>.
+// Returns DispatchResult; carries per-listener errors (empty on success).
 let result = dispatcher.dispatch(event);
 ```
 
-`emit` calls `dispatch` internally and drops the result; the saving comes from not having to *use* the per-listener `Result` vector at the call site. If you do not inspect listener outcomes, prefer `emit` — it is also the documented entry point for that pattern.
+`emit` and `dispatch` share the same listener-execution path (panic-safety wrapping included) but `emit` skips constructing a `DispatchResult` entirely — it does not call `dispatch`. If you do not need per-listener outcomes, prefer `emit`. Both paths now use a lazy errors vector, so the difference is small on the success path; `emit` remains the right choice when the result would be unused.
 
 ### 2. Minimize Event Cloning
 
