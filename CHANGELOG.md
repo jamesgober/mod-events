@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Security
+
+- `crossbeam-epoch` updated from `0.9.18` to `0.9.21` in `Cargo.lock` to resolve [RUSTSEC-2026-0204](https://rustsec.org/advisories/RUSTSEC-2026-0204) (invalid pointer dereference in the `fmt::Pointer` impl for `Atomic` and `Shared`). The crate reaches the tree only through the `criterion` dev-dependency (`criterion` -> `rayon` -> `rayon-core` -> `crossbeam-deque`), so it is never compiled into consumer builds; `cargo audit --deny warnings` and `cargo deny check` are clean again.
+
 ## [1.0.0] — 2026-05-18
 
 Stable API. The public surface is locked under SemVer for the entire `1.x` line — see [`docs/STABILITY.md`](docs/STABILITY.md) for the binding policy and [`docs/API-FREEZE-AUDIT.md`](docs/API-FREEZE-AUDIT.md) for the full surface manifest. Ships with a performance tune over `0.9.x` (criterion shows ~33-38% faster on the `emit` path) and three small breaking cleanups at the freeze boundary that tighten dead surface. See the full release notes in [`docs/release/v1.0.0.md`](docs/release/v1.0.0.md).
