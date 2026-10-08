@@ -74,6 +74,9 @@ jobs:
       - name: clippy
         run: cargo clippy --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
 
+      - name: clippy (no default features)
+        run: cargo clippy --all-targets --no-default-features --target ${{ matrix.target }} -- -D warnings
+
       - name: build
         run: cargo build --all-features --target ${{ matrix.target }} --verbose
 
@@ -83,6 +86,11 @@ jobs:
         # native hardware here (musl on Linux x86, ARM on a real ARM
         # runner), so the tests just run.
         run: cargo test --all-features --target ${{ matrix.target }} --verbose
+
+      - name: test (no default features)
+        # The sync-only build (`async` disabled) is a supported
+        # configuration with its own cfg-gated code paths.
+        run: cargo test --no-default-features --target ${{ matrix.target }}
 
       - name: doc
         env:
@@ -107,6 +115,37 @@ jobs:
       - name: build
         # Override rust-toolchain.toml so the MSRV toolchain is used.
         run: RUSTUP_TOOLCHAIN=1.81.0 cargo build --all-features --verbose
+      - name: build (no default features)
+        run: RUSTUP_TOOLCHAIN=1.81.0 cargo build --no-default-features --verbose
+
+  # ---------------------------------------------------------------------
+  # Latest stable lints. Every other job runs on the toolchain pinned in
+  # rust-toolchain.toml, so new stable lints and deprecations (and new
+  # rustdoc lints) would otherwise surface only when the pin is bumped.
+  # This job runs clippy and rustdoc with warnings denied on whatever
+  # stable is current, so they show up as soon as a release ships.
+  # ---------------------------------------------------------------------
+  stable-lints:
+    name: lints (latest stable)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: stable-lints
+      - name: clippy
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: doc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features
 
   # ---------------------------------------------------------------------
   # Supply-chain: known CVEs and dependency policy.
