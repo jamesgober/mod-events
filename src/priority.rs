@@ -54,7 +54,9 @@ pub enum Priority {
 }
 
 impl Priority {
-    /// Get all priority levels in order
+    /// Every priority level, highest first: `Critical`, `Highest`,
+    /// `High`, `Normal`, `Low`, `Lowest`. This is the order in which
+    /// listeners of different priorities run.
     pub fn all() -> &'static [Priority] {
         &[
             Priority::Critical,
@@ -64,5 +66,20 @@ impl Priority {
             Priority::Low,
             Priority::Lowest,
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_lists_every_level_highest_first() {
+        let all = Priority::all();
+        assert_eq!(all.len(), 6);
+        assert!(all.windows(2).all(|pair| pair[0] > pair[1]));
+        assert_eq!(all.first(), Some(&Priority::Critical));
+        assert_eq!(all.last(), Some(&Priority::Lowest));
+        assert!(all.contains(&Priority::default()));
     }
 }

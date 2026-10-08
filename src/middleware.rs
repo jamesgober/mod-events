@@ -36,12 +36,6 @@ impl std::fmt::Debug for MiddlewareManager {
     }
 }
 
-impl Default for MiddlewareManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MiddlewareManager {
     pub(crate) fn new() -> Self {
         Self {

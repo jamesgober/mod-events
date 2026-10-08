@@ -15,6 +15,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 - `docs/architecture.md`, `docs/api-reference.md`, and `docs/performance.md` describe the lock-free listener execution and its snapshot semantics. `docs/architecture.md` no longer claims that holding a `parking_lot` guard across `.await` is unsound (it makes the future `!Send`).
 - Performance: the per-event-type last-dispatch timestamp is now an `AtomicU64` (nanoseconds since the metrics entry was created, updated with `fetch_max` so racing threads cannot move it backwards) instead of a `parking_lot::Mutex<Instant>` that every dispatch of the same event type contended on. The dispatch fast path also records metrics under the map's read lock without cloning the per-type `Arc`. `EventMetadata::last_dispatch` is still an `Instant` with nanosecond resolution.
 - CI: the check matrix now also runs clippy and the test suite with `--no-default-features`, and the MSRV job builds that configuration too; the sync-only build was previously never linted or tested. A new `lints (latest stable)` job runs clippy and rustdoc with warnings denied on the current stable toolchain, since every other job uses the `1.95.0` pin from `rust-toolchain.toml`.
+- `Priority::all` docs now state the order (highest first) and the method has a unit test. Internal cleanups with no observable change: `DispatchResult::blocked` builds its value directly, and the unused `Default` impl on the crate-private `MiddlewareManager` is gone.
 
 ### Fixed
 

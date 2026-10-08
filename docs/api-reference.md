@@ -344,7 +344,8 @@ priority.
 
 ##### `all() -> &'static [Priority]`
 
-Get all priority levels in order.
+Every priority level, highest first (`Critical` down to `Lowest`),
+which is the order in which listeners of different priorities run.
 
 ```rust
 let priorities = Priority::all();

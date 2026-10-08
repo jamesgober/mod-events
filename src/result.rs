@@ -40,14 +40,8 @@ impl DispatchResult {
         Self {
             listener_count: 0,
             errors: Vec::new(),
-            blocked: false,
+            blocked: true,
         }
-        .with_blocked()
-    }
-
-    fn with_blocked(mut self) -> Self {
-        self.blocked = true;
-        self
     }
 
     /// Whether the dispatch was halted by middleware.
