@@ -6,6 +6,8 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-08
+
 ### Changed
 
 - `Cargo.lock` refreshed to pick up the open Dependabot updates: `futures-util` (and `futures-core`, `futures-sink`, `futures-task`) `0.3.32` -> `0.3.34`, and the `tokio-runtime` group (`tokio` `1.50.0` -> `1.52.3`, `tokio-macros` `2.6.1` -> `2.7.0`, `mio` `1.0.4` -> `1.2.1`, `libc` `0.2.174` -> `0.2.186`). `tokio` is a dev-dependency only; `libc` also reaches consumers on Unix through `parking_lot_core`. `Cargo.toml` requirements are unchanged; `futures-util` stays at `0.3` for consumers.
@@ -14,6 +16,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 - Performance: `dispatch_async` no longer allocates a `Vec` of cloned handler `Arc`s on every call; it borrows the per-type listener list through one `Arc` clone. When no middleware is registered, dispatch skips the middleware lock through an `AtomicBool` check. Combined with the metrics change below, `benches/dispatch_benchmark.rs` against `1.0.0` on the same machine (each iteration also allocates the event's `String`): `single_listener` (`emit`) -18% on Windows x86_64 / -8% on Linux x86_64 (WSL2), `multiple_listeners` -19% / -6%, `dispatch_with_result` -21% / -30%, `dispatch_async_single_listener` -34% / -25%, `dispatch_async_ten_listeners` -32% / -37%.
 - `docs/architecture.md`, `docs/api-reference.md`, and `docs/performance.md` describe the lock-free listener execution and its snapshot semantics. `docs/architecture.md` no longer claims that holding a `parking_lot` guard across `.await` is unsound (it makes the future `!Send`).
 - Performance: the per-event-type last-dispatch timestamp is now an `AtomicU64` (nanoseconds since the metrics entry was created, updated with `fetch_max` so racing threads cannot move it backwards) instead of a `parking_lot::Mutex<Instant>` that every dispatch of the same event type contended on. The dispatch fast path also records metrics under the map's read lock without cloning the per-type `Arc`. `EventMetadata::last_dispatch` is still an `Instant` with nanosecond resolution.
+- Toolchain pin (`rust-toolchain.toml`) moved from `1.95.0` to `1.99.0`, the current stable, so the CI jobs that use the pin test what users build with today. MSRV is unchanged at `1.81`.
 - CI: the check matrix now also runs clippy and the test suite with `--no-default-features`, and the MSRV job builds that configuration too; the sync-only build was previously never linted or tested. A new `lints (latest stable)` job runs clippy and rustdoc with warnings denied on the current stable toolchain, since every other job uses the `1.95.0` pin from `rust-toolchain.toml`.
 - `Priority::all` docs now state the order (highest first) and the method has a unit test. Internal cleanups with no observable change: `DispatchResult::blocked` builds its value directly, and the unused `Default` impl on the crate-private `MiddlewareManager` is gone.
 
@@ -216,8 +219,9 @@ Initial public preview of the event dispatcher.
 - Default features: `async`. Disable with `default-features = false` if you need a sync-only build.
 - MSRV is unspecified for this preview; see the roadmap for the planned pin.
 
-[Unreleased]: https://github.com/jamesgober/mod-events/compare/1.0.0...HEAD
-[1.0.0]: https://github.com/jamesgober/mod-events/compare/0.9.1...1.0.0
+[Unreleased]: https://github.com/jamesgober/mod-events/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jamesgober/mod-events/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/jamesgober/mod-events/releases/tag/v1.0.0
 [0.9.1]: https://github.com/jamesgober/mod-events/compare/0.9.0...0.9.1
 [0.9.0]: https://github.com/jamesgober/mod-events/compare/0.2.1...0.9.0
 [0.2.1]: https://github.com/jamesgober/mod-events/compare/0.2.0...0.2.1

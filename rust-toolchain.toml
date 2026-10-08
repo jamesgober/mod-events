@@ -3,6 +3,6 @@
 # are bitwise-comparable and lint output is stable across environments.
 # Bump intentionally and update CHANGELOG when changing.
 [toolchain]
-channel = "1.95.0"
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

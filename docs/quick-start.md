@@ -13,7 +13,7 @@ Add mod-events to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mod-events = "0.9.0"
+mod-events = "1.1"
 
 # For async support (default)
 mod-events = { version = "0.9.0", features = ["async"] }

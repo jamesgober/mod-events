@@ -16,7 +16,7 @@ name = "mod-events"
 # `pub(crate)`. Priority and EventMetadata gained
 # `#[non_exhaustive]` for forward-compat. See docs/STABILITY.md and
 # CHANGELOG.md `[1.0.0]`.
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 # MSRV. Bumped from 1.75 → 1.81 because Cargo lockfile format v4
 # (default since Rust 1.78) cannot be parsed by older toolchains. CI's
