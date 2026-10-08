@@ -65,7 +65,7 @@ cargo test --release --test benchmarks --features async -- --nocapture
 
 - **Sub-microsecond dispatch** at the per-event level on commodity hardware.
 - **Linear scaling** with listener count — each additional sync listener costs roughly the cost of one indirect call plus the closure body.
-- **Lock-free dispatch path** for metrics: `AtomicU64` fetch-add per dispatch, no write lock on the metrics map after the first dispatch of a given event type.
+- **Lock-free dispatch path** for metrics: an `AtomicU64` fetch-add for the count and an `AtomicU64` fetch-max for the timestamp per dispatch, no mutex, and no write lock on the metrics map after the first dispatch of a given event type.
 - **Read-only listener registry access** during dispatch: one `parking_lot::RwLock::read` held just long enough to clone the per-type `Arc<Vec<_>>` listener list. Listeners run with no lock held.
 - **No middleware cost when none is registered**: an `AtomicBool` check skips the middleware lock.
 - **O(n) subscribe** via `Vec::partition_point` + `Vec::insert`; FIFO is preserved within equal priority.
@@ -73,9 +73,9 @@ cargo test --release --test benchmarks --features async -- --nocapture
 ### Memory Footprint
 
 - **Dispatcher**: ~200 bytes base overhead.
-- **Per listener**: one `Box<dyn Fn>` (16 bytes pointer + boxed closure size) plus ~16 bytes of metadata in `ListenerWrapper`.
-- **Per event type**: one `Arc<EventMetricsCounters>` containing an `AtomicU64`, a `Mutex<Instant>`, and a `&'static str` event name — about 64 bytes plus the `Arc` overhead.
-- **During dispatch**: zero allocations on the sync path. The async path clones the per-handler `Arc` for each listener, which is a refcount bump (no heap traffic).
+- **Per listener**: one `Arc<dyn Fn>` (16 bytes pointer + reference counts + closure size) plus ~16 bytes of metadata in `ListenerWrapper`.
+- **Per event type**: one `Arc<Vec<_>>` listener list, plus one `Arc<EventMetricsCounters>` containing two `AtomicU64`s, an `Instant`, a `TypeId`, and a `&'static str` event name.
+- **During dispatch**: zero allocations on the success path, sync and async. Both paths take one reference-count increment on the per-type listener list instead of copying it.
 
 ## Optimization Tips
 

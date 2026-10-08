@@ -564,8 +564,8 @@ pub struct EventMetadata {
 
 - **`event_name`** - The name of the event type
 - **`type_id`** - Type ID of the event
-- **`last_dispatch`** - Timestamp of the last dispatch
-- **`dispatch_count`** - `u64`. Total number of times this event has been dispatched. Backed by an `AtomicU64` on the dispatch hot path.
+- **`last_dispatch`** - Timestamp of the last dispatch. While `dispatch_count` is `0` it holds the time the metrics entry was created (the first subscription for the type).
+- **`dispatch_count`** - `u64`. Total number of times this event has been dispatched, including dispatches that middleware blocked and dispatches with no listeners. Backed by an `AtomicU64` on the dispatch hot path.
 - **`listener_count`** - Number of listeners (sync + async, when the `async` feature is enabled) currently subscribed. Derived from the live registry at snapshot time, so it cannot drift.
 
 #### Methods
@@ -708,7 +708,7 @@ All types in mod-events are thread-safe:
 
 - **Event dispatch**: sub-microsecond per listener.
 - **Subscribe**: O(n) per call (binary insertion via `Vec::partition_point`).
-- **Metrics path**: lock-free on the hot path. The dispatch path takes a read lock on the metrics map, clones a per-type `Arc`, releases the lock, then increments atomics. The write lock is only ever taken on the first dispatch of a brand-new event type.
+- **Metrics path**: lock-free on the hot path. The dispatch path takes a read lock on the metrics map and updates the per-type atomics (count and last-dispatch timestamp) under it. The write lock is only ever taken on the first dispatch of a brand-new event type.
 - **Memory overhead**: ~200 bytes per dispatcher plus ~64 bytes per registered event type.
 - **Scaling**: Linear with number of listeners per event type.
 - **Thread contention**: Minimal — `parking_lot::RwLock` for the registry, `AtomicU64` for counters. Concurrency invariants verified by `loom` model checks for the only double-checked-locking pattern in the crate.

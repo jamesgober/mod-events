@@ -48,13 +48,13 @@ bottleneck).
               │                                              │
               │   metrics:                                   │
               │   RwLock<HashMap<TypeId, Arc<Counters>>>     │
-              │       Counters: { AtomicU64, Mutex<Instant>} │
+              │       Counters: { AtomicU64 x2, Instant }    │
               └──────────────────────────────────────────────┘
                               ▲
                               │
               dispatch(event) │
               ────────────────┤  1. update metrics (read-lock map,
-                              │     Arc::clone, atomic increment)
+                              │     atomic updates)
                               │  2. middleware: skip if empty, else
                               │     snapshot the chain and run it
                               │  3. listeners.read().get(type_id) →
@@ -66,10 +66,10 @@ bottleneck).
 ```
 
 Three locks, all `parking_lot::RwLock`. The hot path acquires only
-read locks. The metrics map's write lock is taken at most once per
-event type, ever — the first dispatch that sees a new `TypeId`. After
-that, every dispatch increments an atomic counter behind a read lock
-and an `Arc::clone`.
+read locks, and releases each one before any user code runs. The
+metrics map's write lock is taken at most once per event type, ever:
+the first dispatch that sees a new `TypeId`. After that, every
+dispatch records into the per-type atomics under a read lock.
 
 ## Why these primitives
 
@@ -103,16 +103,20 @@ exact pins for critical crates.
 Per-event-type counters are stored as `Arc<EventMetricsCounters>` in
 the outer metrics map. The dispatch hot path:
 
-1. `self.metrics.read()` — read lock on the outer `HashMap`.
-2. `map.get(&type_id).cloned()` — `Arc::clone` is a single atomic
-   increment. If the entry is missing, drop the read lock and take the
-   slow path: write lock, double-check via `entry().or_insert_with()`,
-   insert. The double-check is what makes this race-free; the
-   `loom` model checks in `tests/loom_concurrent.rs` prove it.
-3. Drop the read lock.
-4. `counters.dispatch_count.fetch_add(1, Relaxed)` — lock-free.
-5. `*counters.last_dispatch.lock() = Instant::now()` — `parking_lot::Mutex`
-   on a single field, contended only by same-event-type dispatchers.
+1. `self.metrics.read()`: read lock on the outer `HashMap`.
+2. `map.get(&type_id)`. If the entry is missing, drop the read lock
+   and take the slow path: write lock, double-check via
+   `entry().or_insert_with()`, insert. The double-check is what makes
+   this race-free; the `loom` model checks in
+   `tests/loom_concurrent.rs` prove it.
+3. `counters.dispatch_count.fetch_add(1, Relaxed)`: lock-free.
+4. `counters.last_dispatch_nanos.fetch_max(created.elapsed(), Relaxed)`:
+   the last-dispatch time is stored as nanoseconds since the entry was
+   created, because `Instant` has no atomic form. `fetch_max` keeps it
+   monotonic when dispatches on different threads race. Earlier
+   releases used a `parking_lot::Mutex<Instant>` here, which every
+   dispatch of the same event type contended on.
+5. Drop the read lock. No user code runs while it is held.
 
 The alternative we rejected was `RwLock<HashMap<TypeId, EventMetadata>>`
 where every dispatch took a write lock on the outer map to bump the

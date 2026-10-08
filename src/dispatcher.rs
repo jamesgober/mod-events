@@ -79,9 +79,10 @@ pub struct EventDispatcher {
     #[cfg(feature = "async")]
     async_listeners: RwLock<TypeIdMap<AsyncListenerList>>,
     next_id: AtomicUsize,
-    // Per-event-type counters live behind an `Arc` so the dispatch hot
-    // path can clone the counter pointer under a read lock and increment
-    // its atomics without ever touching the outer map's write lock.
+    // Per-event-type counters. The dispatch hot path records into them
+    // under the map's read lock (atomics only, no user code); the write
+    // lock is taken once per event type to insert the entry. The `Arc`
+    // lets `counters_for` hand out a handle that outlives the guard.
     metrics: RwLock<TypeIdMap<Arc<EventMetricsCounters>>>,
     middleware: RwLock<MiddlewareManager>,
     // `true` while the middleware chain is non-empty. Lets dispatch skip
@@ -773,12 +774,17 @@ impl EventDispatcher {
         };
     }
 
-    /// Hot-path metric update. Tries a read-only fast path first; only
-    /// promotes to a write lock if the entry doesn't exist yet.
+    /// Hot-path metric update. The fast path records the dispatch under
+    /// the map's read lock without cloning the per-type `Arc` (recording
+    /// is a few atomic operations and runs no user code). Only the first
+    /// dispatch of a new event type takes the write lock.
     #[inline]
     fn update_metrics<T: Event>(&self, _event: &T) {
-        let counters = self.counters_for::<T>();
-        counters.record_dispatch();
+        if let Some(counters) = self.metrics.read().get(&TypeId::of::<T>()) {
+            counters.record_dispatch();
+            return;
+        }
+        self.counters_for::<T>().record_dispatch();
     }
 
     /// Snapshot the sync listeners registered for `T`. The read guard is

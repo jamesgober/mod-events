@@ -762,3 +762,23 @@ fn test_dispatch_with_non_self_as_any_still_invokes_listener() {
     });
     assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn test_metrics_last_dispatch_advances_on_each_dispatch() {
+    let dispatcher = EventDispatcher::new();
+    let _id = dispatcher.on(|_: &CounterEvent| {});
+    let type_id = std::any::TypeId::of::<CounterEvent>();
+
+    let created = dispatcher.metrics()[&type_id].last_dispatch;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    let before = std::time::Instant::now();
+    dispatcher.emit(CounterEvent { value: 1 });
+    let after = std::time::Instant::now();
+
+    let meta = dispatcher.metrics()[&type_id].clone();
+    assert_eq!(meta.dispatch_count, 1);
+    assert!(meta.last_dispatch > created);
+    assert!(meta.last_dispatch >= before && meta.last_dispatch <= after);
+    assert!(meta.time_since_last_dispatch() >= after.duration_since(meta.last_dispatch));
+}
