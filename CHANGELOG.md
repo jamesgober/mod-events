@@ -9,6 +9,8 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 ### Changed
 
 - `Cargo.lock` refreshed to pick up the open Dependabot updates: `futures-util` (and `futures-core`, `futures-sink`, `futures-task`) `0.3.32` -> `0.3.34`, and the `tokio-runtime` group (`tokio` `1.50.0` -> `1.52.3`, `tokio-macros` `2.6.1` -> `2.7.0`, `mio` `1.0.4` -> `1.2.1`, `libc` `0.2.174` -> `0.2.186`). `tokio` is a dev-dependency only; `libc` also reaches consumers on Unix through `parking_lot_core`. `Cargo.toml` requirements are unchanged; `futures-util` stays at `0.3` for consumers.
+- CI: the `cargo audit` and `cargo deny` jobs now install pinned prebuilt binaries (`cargo-audit` `0.22.2`, `cargo-deny` `0.20.2`) through `taiki-e/install-action@v2` and run on the stable toolchain. The previous `rustsec/audit-check@v2` step compiled the latest `cargo-audit` from source under the pinned `1.95.0` toolchain and broke when one of its dependencies (`kstring` `2.0.4`) raised its MSRV to `1.96`; it also targeted the deprecated Node.js 20 runtime. The workflow no longer requests the `checks: write` permission.
+- CI: `actions/checkout` bumped from `v4` to `v7` and `actions/upload-artifact` from `v4` to `v7`; every JavaScript action in the workflow now runs on Node.js 24 (supersedes Dependabot PR #11).
 
 ### Security
 

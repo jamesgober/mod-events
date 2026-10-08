@@ -5,12 +5,11 @@ on:
     branches: [main]
   pull_request:
 
-# rustsec/audit-check posts findings as GitHub Check Runs, which require
-# the `checks: write` permission. The default GITHUB_TOKEN used by
-# pull-request workflows does not grant it; declaring it here does.
+# Every job only reads the repository. The supply-chain jobs print their
+# findings to the log and fail the job instead of posting Check Runs, so
+# no write scope is needed.
 permissions:
   contents: read
-  checks: write
 
 jobs:
   # ---------------------------------------------------------------------
@@ -42,7 +41,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `dtolnay/rust-toolchain@stable` installs the stable channel,
       # but `rust-toolchain.toml` in the workspace overrides cargo to
@@ -100,7 +99,7 @@ jobs:
     name: msrv (1.81)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.81.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -111,24 +110,45 @@ jobs:
 
   # ---------------------------------------------------------------------
   # Supply-chain: known CVEs and dependency policy.
+  #
+  # Both tools are installed as pinned, prebuilt release binaries through
+  # `taiki-e/install-action`. Compiling them with `cargo install` is not
+  # an option: the workspace `rust-toolchain.toml` forces the pinned
+  # toolchain onto every cargo invocation, and the tools' own dependency
+  # trees move their MSRV past it (cargo-audit 0.22.2 failed to build on
+  # 1.95.0 because `kstring` 2.0.4 needs rustc 1.96). The previous
+  # `rustsec/audit-check@v2` action did exactly that and also targeted
+  # the deprecated Node.js 20 runtime. `RUSTUP_TOOLCHAIN=stable` keeps
+  # these jobs off the pinned toolchain, since they only read metadata.
+  # Bump the pinned tool versions deliberately.
   # ---------------------------------------------------------------------
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit@0.22.2
+      - name: cargo audit
+        run: cargo audit --deny warnings
 
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
         with:
-          command: check all
+          tool: cargo-deny@0.20.2
+      - name: cargo deny
+        run: cargo deny check
 
   # ---------------------------------------------------------------------
   # Concurrency model checking. Reproduces the dispatcher's
@@ -139,7 +159,7 @@ jobs:
     name: loom (concurrency model check)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -168,7 +188,7 @@ jobs:
       RUSTFLAGS: -Z sanitizer=address
       ASAN_OPTIONS: detect_stack_use_after_return=1:detect_leaks=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
@@ -196,7 +216,7 @@ jobs:
     name: criterion benches
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -204,7 +224,7 @@ jobs:
       - name: run benchmarks
         run: cargo bench --features async --bench dispatch_benchmark
       - name: upload report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: criterion-report
           path: target/criterion
