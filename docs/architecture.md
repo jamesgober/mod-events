@@ -185,8 +185,10 @@ from the 0.2.x signature; iterating still works the same way.
 ### `catch_unwind` on both dispatch paths
 
 Sync dispatch wraps each listener call in `std::panic::catch_unwind`.
-Async dispatch wraps each listener future in
-`futures_util::future::FutureExt::catch_unwind`. A panicking listener
+Async dispatch wraps each listener call in `std::panic::catch_unwind`
+(the closure runs synchronously to build its future) and the returned
+future in `futures_util::future::FutureExt::catch_unwind`. A panicking
+listener
 becomes a `ListenerError` with the message prefix
 `"listener panicked: "` and the dispatch loop continues. Subsequent
 listeners on the same dispatch still run; the dispatcher remains

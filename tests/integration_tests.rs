@@ -719,6 +719,51 @@ mod async_tests {
         assert_eq!(after.success_count(), 1);
         assert_eq!(after_panic.load(Ordering::SeqCst), 2);
     }
+
+    #[tokio::test]
+    async fn test_dispatch_async_with_listener_panicking_before_returning_future_collects_error() {
+        // The synchronous part of an async listener (the closure body
+        // that builds the future) is part of the listener too. A panic
+        // there must become a `ListenerError` like a panic inside the
+        // future, not unwind out of `dispatch_async`.
+        let dispatcher = EventDispatcher::new();
+        let after_panic = Arc::new(AtomicUsize::new(0));
+        let after_panic_clone = after_panic.clone();
+
+        let _bad = dispatcher.subscribe_async_with_priority(
+            |event: &TestEvent| {
+                if event.id == 1 {
+                    panic!("sync prelude boom");
+                }
+                async { Ok(()) }
+            },
+            Priority::High,
+        );
+        let _good = dispatcher.subscribe_async(move |_: &TestEvent| {
+            let after_panic = after_panic_clone.clone();
+            async move {
+                after_panic.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+
+        let result = dispatcher
+            .dispatch_async(TestEvent {
+                id: 1,
+                message: "prelude panic".to_string(),
+            })
+            .await;
+
+        assert_eq!(result.listener_count(), 2);
+        assert_eq!(result.error_count(), 1);
+        assert_eq!(result.success_count(), 1);
+        assert_eq!(after_panic.load(Ordering::SeqCst), 1);
+        let message = result.errors()[0].to_string();
+        assert!(
+            message.starts_with("listener panicked: ") && message.contains("sync prelude boom"),
+            "unexpected error message: {message}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

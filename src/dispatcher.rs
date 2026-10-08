@@ -391,9 +391,10 @@ impl EventDispatcher {
     /// `async_std::task::spawn`) from inside each listener and return
     /// `Ok(())` immediately.
     ///
-    /// Each listener future is wrapped in `catch_unwind`, mirroring
-    /// the panic-safety guarantee of the sync [`Self::dispatch`]
-    /// path. A panic during `.await` becomes a `ListenerError` in
+    /// Each listener call, and the future it returns, is wrapped in
+    /// `catch_unwind`, mirroring the panic-safety guarantee of the sync
+    /// [`Self::dispatch`] path. A panic while the listener builds its
+    /// future or during `.await` becomes a `ListenerError` in
     /// [`DispatchResult::errors`] with the prefix
     /// `"listener panicked: "`. Subsequent listeners still run.
     ///
@@ -448,10 +449,13 @@ impl EventDispatcher {
         };
         let event_any: &dyn Any = &event;
 
-        // Wrap each listener future in `catch_unwind` so a panicking
-        // listener becomes a `ListenerError` in `DispatchResult` rather
-        // than unwinding the dispatching task. Mirrors the panic-safety
-        // wrapping on the sync `dispatch` path.
+        // Wrap each listener in `catch_unwind` so a panicking listener
+        // becomes a `ListenerError` in `DispatchResult` rather than
+        // unwinding the dispatching task. Mirrors the panic-safety
+        // wrapping on the sync `dispatch` path. Two places can panic:
+        // the listener closure itself, which runs synchronously to build
+        // the future, and the future while it is polled. Both are
+        // covered.
         //
         // `AssertUnwindSafe` is required because the listener future
         // closes over arbitrary user state that may not implement
@@ -460,15 +464,18 @@ impl EventDispatcher {
         // responsible for not leaving captured state in a broken
         // condition before panicking. Same contract as the sync path.
         use futures_util::future::FutureExt;
-        use std::panic::AssertUnwindSafe;
 
         // `errors` stays empty (and unallocated) on the success path.
         let mut errors: Vec<ListenerError> = Vec::new();
         for listener in handlers.iter() {
-            match AssertUnwindSafe((listener.handler)(event_any))
-                .catch_unwind()
-                .await
-            {
+            let future = match catch_unwind(AssertUnwindSafe(|| (listener.handler)(event_any))) {
+                Ok(future) => future,
+                Err(payload) => {
+                    errors.push(panic_payload_to_listener_error(payload));
+                    continue;
+                }
+            };
+            match AssertUnwindSafe(future).catch_unwind().await {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => errors.push(err),
                 Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
