@@ -163,7 +163,7 @@ The stability contract does NOT cover:
 
 Two runtime dependencies are sealed for the `1.x` line:
 
-- `parking_lot` (exact-pinned to `=0.12.4`) — hot-path lock
+- `parking_lot` (exact-pinned to `=0.12.5`) — hot-path lock
   primitive. The exact pin per REPS §Dependency Management for
   critical crates.
 - `futures-util` (optional, gated on the `async` feature) — used

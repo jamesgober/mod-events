@@ -91,10 +91,10 @@ harness = false
 #####################################################
 [dependencies]
 # why: provides RwLock and Mutex without lock poisoning. Used for the
-# dispatcher's listener registry, middleware chain, and per-event-type
-# `Mutex<Instant>` last-dispatch timestamp. Critical hot-path dependency
-# — REPS §Dependency Management requires exact pins for critical crates,
-# so this is `=0.12.4` rather than a caret range.
+# dispatcher's listener registry, middleware chain, and metrics map.
+# Critical hot-path dependency: REPS §Dependency Management requires
+# exact pins for critical crates, so this is `=0.12.5` rather than a
+# caret range.
 parking_lot = "=0.12.5"
 
 # why: provides `FutureExt::catch_unwind` for panic-safety on the async

@@ -4,7 +4,8 @@
 //!
 //! ## Features
 //!
-//! - Zero-cost abstractions: no runtime overhead for event dispatch.
+//! - Low overhead: no heap allocation on the dispatch success path, and
+//!   no lock held while listeners run.
 //! - Type-safe: compile-time guarantees for event handling.
 //! - Thread-safe: built for concurrent applications.
 //! - Async support: full `async`/`.await` compatibility (with the `async`

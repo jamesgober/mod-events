@@ -94,7 +94,7 @@ Three reasons.
    `AtomicUsize` plus a parker; `std::sync::RwLock` is larger and
    carries the poisoning flag.
 
-`parking_lot` is exact-pinned to `=0.12.4` in `Cargo.toml` because it
+`parking_lot` is exact-pinned to `=0.12.5` in `Cargo.toml` because it
 is on the dispatch hot path. REPS §Dependency Management requires
 exact pins for critical crates.
 
@@ -374,15 +374,11 @@ Per `metrics` call:
 
 ## What changes between minor versions
 
-The crate is currently `0.x`. Per the project versioning policy, a
-breaking change between `0.x` and `0.(x+1)` is allowed and expected.
-The `0.9.0 → 1.0.0` transition is the API freeze.
-
-What is **promised stable today** for the duration of `0.9.x`:
+The `1.x` line is covered by [`STABILITY.md`](STABILITY.md), which is
+the binding policy. In short, what is stable for all of `1.x`:
 - The shape of `EventDispatcher`, `Event`, `EventListener`,
   `AsyncEventListener`, `Priority`, `ListenerId`, `DispatchResult`,
-  `EventMetadata`, `MiddlewareManager`, `ListenerError`,
-  `AsyncEventResult`.
+  `EventMetadata`, `ListenerError`, `AsyncEventResult`.
 - The behavioral contracts of `dispatch`, `dispatch_async`, `emit`,
   `subscribe`, `subscribe_with_priority`, `subscribe_async`,
   `subscribe_async_with_priority`, `add_middleware`, `unsubscribe`,

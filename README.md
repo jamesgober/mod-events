@@ -42,7 +42,7 @@
 
 ## Key Features
 
-- **Zero-cost abstractions**: *No runtime overhead for event dispatch*.
+- **Low overhead**: *No heap allocation on the dispatch success path, and no lock held while listeners run*.
 - **Type-safe**: *Compile-time guarantees, plus a typed `ListenerError` instead of `Box<dyn Error>`*.
 - **Thread-safe**: *Built for concurrent applications, with `parking_lot` locks that never poison*.
 - **Lock-free metrics**: *Per-event-type `AtomicU64` counters; the dispatch path never takes a write lock*.
