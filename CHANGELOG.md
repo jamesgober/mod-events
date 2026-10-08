@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Changed
+
+- `Cargo.lock` refreshed to pick up the open Dependabot updates: `futures-util` (and `futures-core`, `futures-sink`, `futures-task`) `0.3.32` -> `0.3.34`, and the `tokio-runtime` group (`tokio` `1.50.0` -> `1.52.3`, `tokio-macros` `2.6.1` -> `2.7.0`, `mio` `1.0.4` -> `1.2.1`, `libc` `0.2.174` -> `0.2.186`). `tokio` is a dev-dependency only; `libc` also reaches consumers on Unix through `parking_lot_core`. `Cargo.toml` requirements are unchanged; `futures-util` stays at `0.3` for consumers.
+
 ### Security
 
 - `crossbeam-epoch` updated from `0.9.18` to `0.9.21` in `Cargo.lock` to resolve [RUSTSEC-2026-0204](https://rustsec.org/advisories/RUSTSEC-2026-0204) (invalid pointer dereference in the `fmt::Pointer` impl for `Atomic` and `Shared`). The crate reaches the tree only through the `criterion` dev-dependency (`criterion` -> `rayon` -> `rayon-core` -> `crossbeam-deque`), so it is never compiled into consumer builds; `cargo audit --deny warnings` and `cargo deny check` are clean again.
