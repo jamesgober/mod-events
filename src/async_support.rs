@@ -1,6 +1,7 @@
 //! Async event support (requires "async" feature)
 
 use crate::{Event, ListenerError, Priority};
+use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -57,9 +58,14 @@ pub trait AsyncEventListener<T: Event>: Send + Sync {
     }
 }
 
-/// Internal async listener wrapper.
-type AsyncEventHandler = dyn for<'a> Fn(&'a dyn Event) -> AsyncEventResult<'a> + Send + Sync;
+/// Type-erased async listener body. Receives the event as `&dyn Any`
+/// built by the dispatcher from the concrete `&T`; see
+/// `ListenerHandler` in `listener.rs`.
+type AsyncEventHandler = dyn for<'a> Fn(&'a dyn Any) -> AsyncEventResult<'a> + Send + Sync;
 
+/// A registered async listener plus its ordering metadata. `Clone` is a
+/// reference-count increment; see `ListenerWrapper`.
+#[derive(Clone)]
 pub(crate) struct AsyncListenerWrapper {
     pub(crate) handler: Arc<AsyncEventHandler>,
     pub(crate) priority: Priority,
@@ -84,17 +90,16 @@ impl AsyncListenerWrapper {
         Fut: Future<Output = Result<(), ListenerError>> + Send + 'static,
     {
         Self {
-            handler: Arc::new(move |event: &dyn Event| {
-                if let Some(concrete_event) = event.as_any().downcast_ref::<T>() {
+            handler: Arc::new(move |event: &dyn Any| {
+                if let Some(concrete_event) = event.downcast_ref::<T>() {
                     Box::pin(listener(concrete_event))
                 } else {
-                    // Unreachable in practice — the dispatcher's
-                    // `TypeId`-keyed registry guarantees only matching
-                    // events reach this wrapper. See the matching
+                    // Unreachable: the dispatcher's `TypeId`-keyed registry
+                    // only routes matching events here. See the matching
                     // comment in `ListenerWrapper::new`.
                     debug_assert!(
                         false,
-                        "AsyncListenerWrapper received event of wrong type — dispatcher routing bug"
+                        "AsyncListenerWrapper received event of wrong type: dispatcher routing bug"
                     );
                     Box::pin(async { Ok(()) })
                 }

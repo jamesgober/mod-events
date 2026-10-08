@@ -1,6 +1,8 @@
 //! Event listener traits and implementations
 
 use crate::{Event, ListenerError, Priority};
+use std::any::Any;
+use std::sync::Arc;
 
 /// Trait for synchronous event listeners
 ///
@@ -56,11 +58,22 @@ pub trait EventListener<T: Event>: Send + Sync {
     }
 }
 
-/// Internal listener wrapper for type erasure
-type ListenerHandler = dyn Fn(&dyn Event) -> Result<(), ListenerError> + Send + Sync;
+/// Type-erased listener body stored in the registry.
+///
+/// The argument is the dispatched event as `&dyn Any`, produced by the
+/// dispatcher from the concrete `&T` it was handed. Routing therefore
+/// does not depend on the user's [`Event::as_any`] implementation.
+type ListenerHandler = dyn Fn(&dyn Any) -> Result<(), ListenerError> + Send + Sync;
 
+/// A registered listener plus its ordering metadata.
+///
+/// `Clone` is cheap (one reference-count increment): the registry keeps
+/// each event type's listeners in a copy-on-write `Arc<Vec<_>>`, and a
+/// subscribe or unsubscribe that races an in-flight dispatch clones the
+/// vector instead of waiting for the dispatch to finish.
+#[derive(Clone)]
 pub(crate) struct ListenerWrapper {
-    pub(crate) handler: Box<ListenerHandler>,
+    pub(crate) handler: Arc<ListenerHandler>,
     pub(crate) priority: Priority,
     pub(crate) id: usize,
 }
@@ -82,21 +95,20 @@ impl ListenerWrapper {
         F: Fn(&T) -> Result<(), ListenerError> + Send + Sync + 'static,
     {
         Self {
-            handler: Box::new(move |event: &dyn Event| {
-                if let Some(concrete_event) = event.as_any().downcast_ref::<T>() {
+            handler: Arc::new(move |event: &dyn Any| {
+                if let Some(concrete_event) = event.downcast_ref::<T>() {
                     listener(concrete_event)
                 } else {
-                    // The dispatcher's `TypeId`-keyed listener registry
-                    // makes this branch unreachable: a listener
-                    // registered for `T` only ever receives events of
-                    // type `T`. The branch exists to satisfy the
-                    // closure's return type; if it ever fires the
-                    // dispatcher routing has a bug. Promotes to a
-                    // panic in debug builds; silently returns `Ok`
-                    // in release to preserve the no-panic contract.
+                    // The registry is keyed by `TypeId::of::<T>()` and the
+                    // dispatcher builds the `&dyn Any` from a concrete
+                    // `&T`, so this branch is unreachable. It exists to
+                    // satisfy the closure's return type; if it ever fires
+                    // the dispatcher routing has a bug. Promotes to a
+                    // panic in debug builds; returns `Ok` in release to
+                    // preserve the no-panic contract.
                     debug_assert!(
                         false,
-                        "ListenerWrapper received event of wrong type — dispatcher routing bug"
+                        "ListenerWrapper received event of wrong type: dispatcher routing bug"
                     );
                     Ok(())
                 }

@@ -440,6 +440,21 @@ fn test_clear_middleware_does_not_affect_listeners_or_metrics() {
 }
 
 #[test]
+fn test_add_middleware_after_clear_middleware_blocks_again() {
+    let dispatcher = EventDispatcher::new();
+    let _id = dispatcher.on(|_: &CounterEvent| {});
+
+    dispatcher.add_middleware(|_: &dyn Event| false);
+    assert!(dispatcher.dispatch(CounterEvent { value: 1 }).is_blocked());
+
+    dispatcher.clear_middleware();
+    assert!(!dispatcher.dispatch(CounterEvent { value: 2 }).is_blocked());
+
+    dispatcher.add_middleware(|_: &dyn Event| false);
+    assert!(dispatcher.dispatch(CounterEvent { value: 3 }).is_blocked());
+}
+
+#[test]
 fn test_dispatch_with_panicking_listener_collects_error_and_continues() {
     let dispatcher = EventDispatcher::new();
     let after_panic = Arc::new(AtomicUsize::new(0));
@@ -704,4 +719,46 @@ mod async_tests {
         assert_eq!(after.success_count(), 1);
         assert_eq!(after_panic.load(Ordering::SeqCst), 2);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Routing does not depend on the user's `Event::as_any` implementation
+// ---------------------------------------------------------------------------
+
+/// An event whose `as_any` exposes an inner value instead of `self`.
+/// Unusual, but nothing in the `Event` contract forbids it, and the
+/// dispatcher already knows the concrete type at the dispatch site.
+#[derive(Debug, Clone)]
+struct Envelope {
+    inner: CounterEvent,
+}
+
+impl Event for Envelope {
+    fn as_any(&self) -> &dyn std::any::Any {
+        &self.inner
+    }
+}
+
+#[test]
+fn test_dispatch_with_non_self_as_any_still_invokes_listener() {
+    let dispatcher = EventDispatcher::new();
+    let seen = Arc::new(AtomicUsize::new(0));
+    let seen_clone = seen.clone();
+    let _id = dispatcher.on(move |event: &Envelope| {
+        assert_eq!(event.inner.value, 7);
+        seen_clone.fetch_add(1, Ordering::SeqCst);
+    });
+
+    let result = dispatcher.dispatch(Envelope {
+        inner: CounterEvent { value: 7 },
+    });
+
+    assert!(result.all_succeeded(), "errors: {:?}", result.errors());
+    assert_eq!(result.listener_count(), 1);
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+
+    dispatcher.emit(Envelope {
+        inner: CounterEvent { value: 7 },
+    });
+    assert_eq!(seen.load(Ordering::SeqCst), 2);
 }

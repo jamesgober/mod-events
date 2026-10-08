@@ -66,7 +66,8 @@ cargo test --release --test benchmarks --features async -- --nocapture
 - **Sub-microsecond dispatch** at the per-event level on commodity hardware.
 - **Linear scaling** with listener count — each additional sync listener costs roughly the cost of one indirect call plus the closure body.
 - **Lock-free dispatch path** for metrics: `AtomicU64` fetch-add per dispatch, no write lock on the metrics map after the first dispatch of a given event type.
-- **Read-only listener registry access** during dispatch: a single `parking_lot::RwLock::read` for the duration of the dispatch loop.
+- **Read-only listener registry access** during dispatch: one `parking_lot::RwLock::read` held just long enough to clone the per-type `Arc<Vec<_>>` listener list. Listeners run with no lock held.
+- **No middleware cost when none is registered**: an `AtomicBool` check skips the middleware lock.
 - **O(n) subscribe** via `Vec::partition_point` + `Vec::insert`; FIFO is preserved within equal priority.
 
 ### Memory Footprint

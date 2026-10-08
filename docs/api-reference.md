@@ -240,6 +240,11 @@ Remove a listener.
 
 **Returns:** `bool` - `true` if the listener was found and removed
 
+The removal applies to dispatches that start after `unsubscribe`
+returns. A dispatch already in progress (including the one that is
+running the listener calling `unsubscribe`) finishes with the listener
+list it started with. See [Thread Safety](#thread-safety).
+
 ```rust
 let id = dispatcher.on(|event: &MyEvent| {
     println!("Handler");
@@ -693,6 +698,11 @@ All types in mod-events are thread-safe:
 - Events must implement `Send + Sync`
 - Listeners must implement `Send + Sync`
 - All operations are safe for concurrent use
+- No internal lock is held while listeners or middleware run, so they
+  may call back into the dispatcher (emit other events, subscribe,
+  unsubscribe themselves, add or clear middleware, `clear`). Each
+  dispatch works from the listener list and middleware chain as they
+  were when it started.
 
 ## Performance Characteristics
 

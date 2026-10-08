@@ -36,15 +36,15 @@ bottleneck).
               │                                              │
    subscribe ─┼─►  listeners:        ┌──────────────────┐   │
               │   RwLock<HashMap     │ Vec<Listener>    │   │
-              │   <TypeId,           │  ▪ Box<dyn Fn>   │   │
-              │    Vec<Listener>>>   │  ▪ Priority      │   │
+              │   <TypeId, Arc<      │  ▪ Arc<dyn Fn>   │   │
+              │    Vec<Listener>>>>  │  ▪ Priority      │   │
               │                      │  ▪ ListenerId    │   │
               │                      └──────────────────┘   │
               │                                              │
    subscribe_async ─►  async_listeners: similar shape         │
               │                                              │
    add_middleware ─►  middleware:                              │
-              │   RwLock<MiddlewareManager (Vec<Box<dyn Fn>)>│
+              │   RwLock<MiddlewareManager (Arc<Vec<..>>)>   │
               │                                              │
               │   metrics:                                   │
               │   RwLock<HashMap<TypeId, Arc<Counters>>>     │
@@ -55,8 +55,10 @@ bottleneck).
               dispatch(event) │
               ────────────────┤  1. update metrics (read-lock map,
                               │     Arc::clone, atomic increment)
-                              │  2. middleware.read().process(event)
+                              │  2. middleware: skip if empty, else
+                              │     snapshot the chain and run it
                               │  3. listeners.read().get(type_id) →
+                              │     Arc::clone, release the lock,
                               │     iterate, catch_unwind each, push
                               │     errors lazily.
                               │  4. return DispatchResult.
@@ -218,21 +220,33 @@ to consumers.
 
 Three lock domains, each held for the smallest possible scope:
 
-1. **Listener registry.** Read-locked during dispatch (entire dispatch
-   holds the read lock; user code runs while it is held). Write-locked
-   during subscribe / unsubscribe / clear. Note: a listener that
-   subscribes another listener mid-dispatch would deadlock because
-   subscribe needs the write lock and the dispatch holds the read
-   lock. This is documented; the use case is rare enough that we
-   accept the limitation rather than implement deferred-subscription
-   queueing (REPS §YAGNI).
+1. **Listener registry.** Each event type maps to a copy-on-write
+   `Arc<Vec<Listener>>`. Dispatch read-locks the map only long enough
+   to clone that `Arc` (one reference-count increment, no allocation),
+   releases the lock, and then runs the listeners. Subscribe,
+   unsubscribe, and clear take the write lock and use
+   `Arc::make_mut`, which edits the vector in place when no dispatch
+   holds a snapshot and clones it otherwise. Because no lock is held
+   while user code runs, listeners can call back into the dispatcher:
+   emit other events, subscribe, unsubscribe themselves, or clear.
+   Releases up to `1.0.0` held the read lock for the whole dispatch
+   loop, which deadlocked on any of those calls (and on a nested
+   dispatch while another thread was waiting to subscribe, since
+   `parking_lot`'s fair `RwLock` queues new readers behind a waiting
+   writer). `tests/reentrancy.rs` covers each case.
 
-2. **Async listener registry.** Same shape as the sync registry. The
-   `dispatch_async` path explicitly **does not** hold the read lock
-   across `await` points: it `Arc::clone`s every handler under the
-   read lock, releases the lock, then awaits. Holding `parking_lot`
-   guards across awaits is unsound (the guard is `!Send`), so this
-   pattern is not optional.
+   The trade-off: a dispatch works from the listener list as it was
+   when the dispatch started. A listener added mid-dispatch first runs
+   on the next dispatch, and a listener removed while a dispatch is in
+   progress (on this or another thread) can still be invoked by that
+   in-flight dispatch.
+
+2. **Async listener registry.** Same shape as the sync registry.
+   `dispatch_async` clones the per-type `Arc` under the read lock and
+   releases it before the first `await`. Holding a `parking_lot` guard
+   across an `await` would make the future `!Send` and stall writers
+   for as long as the slowest listener, so the lock is never held
+   there.
 
 3. **Metrics map.** Read-locked on every dispatch. Write-locked only
    on the first dispatch of a new event type to insert the per-type
@@ -240,9 +254,13 @@ Three lock domains, each held for the smallest possible scope:
    read-only against the map and lock-free against the per-type
    counters.
 
-The middleware chain uses its own `RwLock<MiddlewareManager>`. Read
-lock during dispatch (to iterate the chain), write lock during
-`add_middleware` and `clear_middleware`.
+The middleware chain uses its own `RwLock<MiddlewareManager>` with
+the same copy-on-write `Arc<Vec<..>>` layout: dispatch snapshots the
+chain under the read lock and runs it after releasing the lock, so
+middleware may also call back into the dispatcher. An `AtomicBool`
+mirrors whether the chain is non-empty, so the common no-middleware
+dispatch skips the lock entirely. `add_middleware` and
+`clear_middleware` take the write lock.
 
 ## Why some things were rejected
 
@@ -313,23 +331,28 @@ nightly Linux.
 ## Memory profile
 
 Per `EventDispatcher::new`:
-- Three `Arc<RwLock<...>>` allocations (listeners, metrics, middleware).
-- One `Arc<RwLock<HashMap<...>>>` allocation for async listeners when
-  the `async` feature is enabled.
-- One `AtomicUsize` for `next_id`.
+- One `Arc` allocation for the empty middleware chain. The `RwLock`s
+  and their maps live inline in the dispatcher; empty maps do not
+  allocate.
+- One `AtomicUsize` for `next_id` and one `AtomicBool` for the
+  middleware fast path.
 
 Per `subscribe` call:
-- One `Box<dyn Fn>` for the wrapped handler.
+- One `Arc<dyn Fn>` for the wrapped handler.
 - Possible Vec growth (geometric reallocation) when the per-event-type
   listener vector exceeds capacity.
-- First-ever subscribe of an event type: one `Vec::new()` for the
-  listener slot, one `Box<EventMetricsCounters>` + `Arc::new` for the
-  metrics slot.
+- A full copy of that event type's listener vector if a dispatch of the
+  same type is in progress at that moment (copy-on-write).
+- First-ever subscribe of an event type: one `Arc<Vec>` for the
+  listener slot and one `Arc<EventMetricsCounters>` for the metrics
+  slot.
 
-Per `dispatch` call (success path):
+Per `dispatch` / `dispatch_async` call (success path):
 - **Zero heap allocations** after the first dispatch of a given event
-  type. The lazy errors Vec stays empty; `Vec::new()` does not
-  allocate.
+  type. The listener list is borrowed through an `Arc` clone; the lazy
+  errors Vec stays empty, and `Vec::new()` does not allocate. (Before
+  this change `dispatch_async` collected the handlers into a fresh
+  `Vec` on every call.)
 - Per failing listener: one `ListenerError` (the user's listener
   constructed it; it is moved into the errors vector).
 

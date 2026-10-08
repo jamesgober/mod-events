@@ -2,28 +2,51 @@
 
 use crate::error::panic_payload_to_listener_error;
 use crate::metrics::EventMetricsCounters;
-use crate::middleware::MiddlewareManager;
+use crate::middleware::{self, MiddlewareManager};
 use crate::type_id_map::TypeIdMap;
 use crate::{
     DispatchResult, Event, EventMetadata, ListenerError, ListenerId, ListenerWrapper, Priority,
 };
 use parking_lot::RwLock;
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[cfg(feature = "async")]
-use crate::{AsyncEventResult, AsyncListenerWrapper};
+use crate::AsyncListenerWrapper;
+
+/// Listeners for one event type, in descending priority order (FIFO
+/// within equal priority).
+///
+/// Copy-on-write: dispatch clones the `Arc` under the registry's read
+/// lock and runs the listeners after releasing it, so no lock is held
+/// while user code runs. Writers use `Arc::make_mut`, which mutates in
+/// place when no dispatch holds a snapshot and clones the vector
+/// otherwise.
+type ListenerList = Arc<Vec<ListenerWrapper>>;
 
 #[cfg(feature = "async")]
-type AsyncHandler = Arc<dyn for<'a> Fn(&'a dyn Event) -> AsyncEventResult<'a> + Send + Sync>;
+type AsyncListenerList = Arc<Vec<AsyncListenerWrapper>>;
 
 /// High-performance event dispatcher
 ///
 /// The main component of the Mod Events system. Thread-safe and optimized
 /// for high-performance event dispatch with minimal overhead.
+///
+/// # Re-entrancy and concurrent changes
+///
+/// No internal lock is held while listeners or middleware run. Listeners
+/// and middleware may therefore call back into the same dispatcher:
+/// dispatch or emit other events, subscribe, unsubscribe (including
+/// themselves), add or clear middleware, or call [`Self::clear`].
+///
+/// Each dispatch works from the listener list and middleware chain as
+/// they were when it started. A listener added during a dispatch first
+/// runs on the next dispatch, and a listener removed during a dispatch
+/// (by another listener or by another thread) may still be invoked by
+/// dispatches that were already in progress when it was removed.
 ///
 /// # Example
 ///
@@ -52,15 +75,19 @@ type AsyncHandler = Arc<dyn for<'a> Fn(&'a dyn Event) -> AsyncEventResult<'a> + 
 /// });
 /// ```
 pub struct EventDispatcher {
-    listeners: RwLock<TypeIdMap<Vec<ListenerWrapper>>>,
+    listeners: RwLock<TypeIdMap<ListenerList>>,
     #[cfg(feature = "async")]
-    async_listeners: RwLock<TypeIdMap<Vec<AsyncListenerWrapper>>>,
+    async_listeners: RwLock<TypeIdMap<AsyncListenerList>>,
     next_id: AtomicUsize,
     // Per-event-type counters live behind an `Arc` so the dispatch hot
     // path can clone the counter pointer under a read lock and increment
     // its atomics without ever touching the outer map's write lock.
     metrics: RwLock<TypeIdMap<Arc<EventMetricsCounters>>>,
     middleware: RwLock<MiddlewareManager>,
+    // `true` while the middleware chain is non-empty. Lets dispatch skip
+    // the middleware lock entirely in the common no-middleware case.
+    // Only written while the `middleware` write lock is held.
+    has_middleware: AtomicBool,
 }
 
 impl EventDispatcher {
@@ -74,6 +101,7 @@ impl EventDispatcher {
             next_id: AtomicUsize::new(0),
             metrics: RwLock::new(TypeIdMap::default()),
             middleware: RwLock::new(MiddlewareManager::new()),
+            has_middleware: AtomicBool::new(false),
         }
     }
 
@@ -125,7 +153,7 @@ impl EventDispatcher {
 
         {
             let mut listeners = self.listeners.write();
-            let event_listeners = listeners.entry(type_id).or_default();
+            let event_listeners = Arc::make_mut(listeners.entry(type_id).or_default());
             // Binary insertion preserves descending-priority order in O(n)
             // (one shift), avoiding the O(n log n) full re-sort the
             // previous push + sort_by_key combination performed.
@@ -268,7 +296,7 @@ impl EventDispatcher {
 
         {
             let mut async_listeners = self.async_listeners.write();
-            let event_listeners = async_listeners.entry(type_id).or_default();
+            let event_listeners = Arc::make_mut(async_listeners.entry(type_id).or_default());
             // Binary insertion preserves descending-priority order in O(n).
             // See `subscribe_with_priority` for the rationale.
             let pos = event_listeners.partition_point(|existing| existing.priority >= priority);
@@ -284,7 +312,11 @@ impl EventDispatcher {
 
     /// Dispatch an event synchronously.
     ///
-    /// Returns a [`DispatchResult`] containing per-listener outcomes.
+    /// Runs every listener registered through [`Self::on`],
+    /// [`Self::subscribe`], or [`Self::subscribe_with_priority`] for `T`,
+    /// in descending priority order, and returns a [`DispatchResult`]
+    /// containing per-listener outcomes. Async listeners are not invoked
+    /// here; they only run through `dispatch_async`.
     ///
     /// # Example
     ///
@@ -320,37 +352,31 @@ impl EventDispatcher {
             return DispatchResult::blocked();
         }
 
-        let type_id = TypeId::of::<T>();
-        let listeners = self.listeners.read();
+        let Some(event_listeners) = self.listener_snapshot::<T>() else {
+            return DispatchResult::new(0, Vec::new());
+        };
+        let event_any: &dyn Any = &event;
 
         // Most dispatches succeed. `errors` stays empty (and
-        // unallocated — `Vec::new()` does not allocate) on the
-        // success path; we only push when a listener returns `Err`
-        // or panics.
+        // unallocated: `Vec::new()` does not allocate) on the success
+        // path; we only push when a listener returns `Err` or panics.
         let mut errors: Vec<ListenerError> = Vec::new();
-        let mut listener_count = 0_usize;
 
-        if let Some(event_listeners) = listeners.get(&type_id) {
-            for listener in event_listeners {
-                listener_count += 1;
-                // `catch_unwind` keeps a panicking listener from
-                // unwinding the dispatch thread (and the read lock we
-                // are holding above) into the caller. Panics are
-                // converted into the same `ListenerError` shape a
-                // well-behaved listener would have returned, so the
-                // caller's `DispatchResult::errors()` is the single
-                // place to look for failures. `parking_lot::RwLock`
-                // does not poison, so dropping the guard after a
-                // caught panic leaves the registry in a usable state.
-                match catch_unwind(AssertUnwindSafe(|| (listener.handler)(&event))) {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => errors.push(err),
-                    Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
-                }
+        for listener in event_listeners.iter() {
+            // `catch_unwind` keeps a panicking listener from unwinding
+            // into the caller. Panics are converted into the same
+            // `ListenerError` shape a well-behaved listener would have
+            // returned, so the caller's `DispatchResult::errors()` is
+            // the single place to look for failures. No registry lock
+            // is held here, so a panic cannot leave one held.
+            match catch_unwind(AssertUnwindSafe(|| (listener.handler)(event_any))) {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => errors.push(err),
+                Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
             }
         }
 
-        DispatchResult::new(listener_count, errors)
+        DispatchResult::new(event_listeners.len(), errors)
     }
 
     /// Dispatch an event asynchronously and await every async listener
@@ -414,21 +440,12 @@ impl EventDispatcher {
             return DispatchResult::blocked();
         }
 
-        let type_id = TypeId::of::<T>();
-
-        // Collect cloned handlers without holding the lock across await points.
-        let handlers: Vec<AsyncHandler> = {
-            let async_listeners = self.async_listeners.read();
-            async_listeners
-                .get(&type_id)
-                .map(|event_listeners| {
-                    event_listeners
-                        .iter()
-                        .map(|listener| listener.handler.clone())
-                        .collect()
-                })
-                .unwrap_or_default()
+        // Snapshot the listener list (one reference-count increment, no
+        // allocation) so no lock is held across await points.
+        let Some(handlers) = self.async_listener_snapshot::<T>() else {
+            return DispatchResult::new(0, Vec::new());
         };
+        let event_any: &dyn Any = &event;
 
         // Wrap each listener future in `catch_unwind` so a panicking
         // listener becomes a `ListenerError` in `DispatchResult` rather
@@ -445,17 +462,19 @@ impl EventDispatcher {
         use std::panic::AssertUnwindSafe;
 
         // `errors` stays empty (and unallocated) on the success path.
-        let listener_count = handlers.len();
         let mut errors: Vec<ListenerError> = Vec::new();
-        for handler in handlers {
-            match AssertUnwindSafe(handler(&event)).catch_unwind().await {
+        for listener in handlers.iter() {
+            match AssertUnwindSafe((listener.handler)(event_any))
+                .catch_unwind()
+                .await
+            {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => errors.push(err),
                 Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
             }
         }
 
-        DispatchResult::new(listener_count, errors)
+        DispatchResult::new(handlers.len(), errors)
     }
 
     /// Fire and forget — dispatch without inspecting the result.
@@ -464,6 +483,8 @@ impl EventDispatcher {
     /// the call site (logging, fanout to passive observers). The errors
     /// returned by failing listeners are discarded; if you need them,
     /// call [`Self::dispatch`] instead.
+    ///
+    /// Like [`Self::dispatch`], only sync listeners are invoked.
     ///
     /// # Example
     ///
@@ -495,18 +516,16 @@ impl EventDispatcher {
             return;
         }
 
-        let type_id = TypeId::of::<T>();
-        let listeners = self.listeners.read();
+        let Some(event_listeners) = self.listener_snapshot::<T>() else {
+            return;
+        };
+        let event_any: &dyn Any = &event;
 
-        if let Some(event_listeners) = listeners.get(&type_id) {
-            for listener in event_listeners {
-                // Same panic-safety contract as `dispatch`, but the
-                // outcome is intentionally discarded. This avoids
-                // allocating the per-call result vector that `dispatch`
-                // returns — the documented win of `emit` over
-                // `dispatch` for fire-and-forget callers.
-                let _ = catch_unwind(AssertUnwindSafe(|| (listener.handler)(&event)));
-            }
+        for listener in event_listeners.iter() {
+            // Same panic-safety contract as `dispatch`, but the outcome
+            // is intentionally discarded: `emit` is fire-and-forget and
+            // never builds a `DispatchResult`.
+            let _ = catch_unwind(AssertUnwindSafe(|| (listener.handler)(event_any)));
         }
     }
 
@@ -530,7 +549,9 @@ impl EventDispatcher {
     where
         F: Fn(&dyn Event) -> bool + Send + Sync + 'static,
     {
-        self.middleware.write().add(middleware);
+        let mut chain = self.middleware.write();
+        chain.add(middleware);
+        self.has_middleware.store(true, Ordering::Release);
     }
 
     /// Remove a previously registered listener.
@@ -558,26 +579,41 @@ impl EventDispatcher {
     /// assert!(!dispatcher.unsubscribe(id));
     /// ```
     pub fn unsubscribe(&self, listener_id: ListenerId) -> bool {
-        // Try sync listeners first
-        {
+        // Try sync listeners first. The removed wrapper is moved out of
+        // the locked block and dropped after the guard is released, so a
+        // listener whose captured state calls back into the dispatcher on
+        // drop cannot deadlock against the registry lock.
+        let removed = {
             let mut listeners = self.listeners.write();
-            if let Some(event_listeners) = listeners.get_mut(&listener_id.type_id) {
-                if let Some(pos) = event_listeners.iter().position(|l| l.id == listener_id.id) {
-                    let _removed = event_listeners.remove(pos);
-                    return true;
-                }
-            }
+            listeners
+                .get_mut(&listener_id.type_id)
+                .and_then(|event_listeners| {
+                    let pos = event_listeners
+                        .iter()
+                        .position(|l| l.id == listener_id.id)?;
+                    Some(Arc::make_mut(event_listeners).remove(pos))
+                })
+        };
+        if removed.is_some() {
+            return true;
         }
 
         // Try async listeners
         #[cfg(feature = "async")]
         {
-            let mut async_listeners = self.async_listeners.write();
-            if let Some(event_listeners) = async_listeners.get_mut(&listener_id.type_id) {
-                if let Some(pos) = event_listeners.iter().position(|l| l.id == listener_id.id) {
-                    let _removed = event_listeners.remove(pos);
-                    return true;
-                }
+            let removed = {
+                let mut async_listeners = self.async_listeners.write();
+                async_listeners
+                    .get_mut(&listener_id.type_id)
+                    .and_then(|event_listeners| {
+                        let pos = event_listeners
+                            .iter()
+                            .position(|l| l.id == listener_id.id)?;
+                        Some(Arc::make_mut(event_listeners).remove(pos))
+                    })
+            };
+            if removed.is_some() {
+                return true;
             }
         }
 
@@ -612,7 +648,7 @@ impl EventDispatcher {
             .listeners
             .read()
             .get(&type_id)
-            .map(Vec::len)
+            .map(|list| list.len())
             .unwrap_or(0);
 
         #[cfg(feature = "async")]
@@ -620,7 +656,7 @@ impl EventDispatcher {
             .async_listeners
             .read()
             .get(&type_id)
-            .map(Vec::len)
+            .map(|list| list.len())
             .unwrap_or(0);
 
         #[cfg(not(feature = "async"))]
@@ -674,9 +710,15 @@ impl EventDispatcher {
             .iter()
             .map(|(type_id, counters)| {
                 let mut snap = counters.snapshot();
-                let sync_count = listeners_map.get(type_id).map(Vec::len).unwrap_or(0);
+                let sync_count = listeners_map
+                    .get(type_id)
+                    .map(|list| list.len())
+                    .unwrap_or(0);
                 #[cfg(feature = "async")]
-                let async_count = async_listeners_map.get(type_id).map(Vec::len).unwrap_or(0);
+                let async_count = async_listeners_map
+                    .get(type_id)
+                    .map(|list| list.len())
+                    .unwrap_or(0);
                 #[cfg(not(feature = "async"))]
                 let async_count = 0;
                 snap.listener_count = sync_count + async_count;
@@ -709,10 +751,12 @@ impl EventDispatcher {
     /// assert_eq!(dispatcher.listener_count::<Tick>(), 0);
     /// ```
     pub fn clear(&self) {
-        self.listeners.write().clear();
+        // Swap the maps out under the lock and drop the old contents
+        // after the guard is released; see `unsubscribe`.
+        let _removed = std::mem::take(&mut *self.listeners.write());
 
         #[cfg(feature = "async")]
-        self.async_listeners.write().clear();
+        let _removed_async = std::mem::take(&mut *self.async_listeners.write());
     }
 
     /// Drop every registered middleware function.
@@ -721,7 +765,12 @@ impl EventDispatcher {
     /// test setup/teardown when you want to reset the middleware
     /// chain between cases without rebuilding the dispatcher.
     pub fn clear_middleware(&self) {
-        self.middleware.write().clear();
+        // Released after the write guard is dropped; see `unsubscribe`.
+        let _removed = {
+            let mut chain = self.middleware.write();
+            self.has_middleware.store(false, Ordering::Release);
+            chain.take()
+        };
     }
 
     /// Hot-path metric update. Tries a read-only fast path first; only
@@ -730,6 +779,29 @@ impl EventDispatcher {
     fn update_metrics<T: Event>(&self, _event: &T) {
         let counters = self.counters_for::<T>();
         counters.record_dispatch();
+    }
+
+    /// Snapshot the sync listeners registered for `T`. The read guard is
+    /// a temporary dropped at the end of the statement, so the caller
+    /// runs listeners with no registry lock held.
+    #[inline]
+    fn listener_snapshot<T: Event>(&self) -> Option<ListenerList> {
+        self.listeners
+            .read()
+            .get(&TypeId::of::<T>())
+            .filter(|list| !list.is_empty())
+            .cloned()
+    }
+
+    /// Async counterpart of [`Self::listener_snapshot`].
+    #[cfg(feature = "async")]
+    #[inline]
+    fn async_listener_snapshot<T: Event>(&self) -> Option<AsyncListenerList> {
+        self.async_listeners
+            .read()
+            .get(&TypeId::of::<T>())
+            .filter(|list| !list.is_empty())
+            .cloned()
     }
 
     /// Look up (or create) the per-type counters. The fast path holds
@@ -751,9 +823,19 @@ impl EventDispatcher {
         )
     }
 
+    /// Run the middleware chain. The chain is snapshotted under the read
+    /// lock and executed after the guard is released, so middleware may
+    /// call back into the dispatcher.
     #[inline]
     fn check_middleware(&self, event: &dyn Event) -> bool {
-        self.middleware.read().process(event)
+        if !self.has_middleware.load(Ordering::Acquire) {
+            return true;
+        }
+        let chain = self.middleware.read().snapshot();
+        match chain {
+            None => true,
+            Some(chain) => middleware::process(&chain, event),
+        }
     }
 }
 
