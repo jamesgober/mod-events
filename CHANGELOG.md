@@ -6,6 +6,29 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-12
+
+Fixes from an independent review. No breaking change; MSRV stays at 1.81. Release notes: [`docs/release/v1.2.0.md`](docs/release/v1.2.0.md).
+
+### Added
+
+- `EventDispatcher::dispatch_async_all` (with the `async` feature) runs sync and async listeners together in one priority order. Listeners of equal priority run in registration order, whichever kind they are. Its `DispatchResult::listener_count()` counts both kinds, so it matches `listener_count::<T>()`. `dispatch`, `emit` and `dispatch_async` keep their 1.x behaviour.
+
+### Fixed
+
+- **The `dispatch_async` future is now `Send`.** It held a `&dyn Any` (which is not `Send`) across an await point, so `tokio::spawn(async move { dispatcher.dispatch_async(ev).await })` and any spawned task that awaited it failed to compile. The internal async handler now takes `&(dyn Any + Send + Sync)`. A compile-time check and a test that runs it inside `tokio::spawn` on a multi-thread runtime guard it.
+- **A panicking middleware no longer unwinds into the caller of `emit`, `dispatch` or `dispatch_async`.** Each middleware call is wrapped in `catch_unwind`, like listener calls. A panic blocks the event (fail closed): no listener and no later middleware runs. `dispatch`, `dispatch_async` and `dispatch_async_all` return a blocked `DispatchResult` whose `errors()` holds one error starting with `"middleware panicked: "`; `emit` discards it.
+- **A `ListenerId` from one dispatcher no longer removes a listener of another.** Ids were counted per dispatcher, so the same id was valid in every dispatcher that registered listeners in the same order, and `unsubscribe` on the wrong dispatcher removed an unrelated listener and returned `true`. Ids now come from one process-wide counter, and such a call returns `false`.
+
+### Deprecated
+
+- `EventListener` and `AsyncEventListener`. No dispatcher method accepts either trait, so an implementation could not be registered and its `priority()` was never read. Register a closure instead, for example `dispatcher.subscribe_with_priority(move |e| listener.handle(e), priority)`. Both stay available for the whole 1.x line.
+
+### Changed
+
+- Documentation: every dispatch method, the README and `docs/api-reference.md` state first which listeners it runs (`emit` and `dispatch`: sync only; `dispatch_async`: async only; `dispatch_async_all`: both). `docs/STABILITY.md` covers middleware panics, the need for `panic = "unwind"` for panic safety, and the lack of a recursion guard.
+- Documentation: `docs/performance.md` no longer claims lock-free reads or zero allocations on the async path (each async listener allocates one boxed future per dispatch), drops the old 262 ns figures and the comparison table that had no method, and adds a note that dispatching one event type from many threads does not scale linearly. The crate description and crate docs no longer say "zero-overhead".
+
 ## [1.1.0] — 2026-10-08
 
 ### Changed
@@ -219,7 +242,8 @@ Initial public preview of the event dispatcher.
 - Default features: `async`. Disable with `default-features = false` if you need a sync-only build.
 - MSRV is unspecified for this preview; see the roadmap for the planned pin.
 
-[Unreleased]: https://github.com/jamesgober/mod-events/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/jamesgober/mod-events/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/jamesgober/mod-events/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jamesgober/mod-events/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jamesgober/mod-events/releases/tag/v1.0.0
 [0.9.1]: https://github.com/jamesgober/mod-events/compare/0.9.0...0.9.1

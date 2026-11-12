@@ -19,10 +19,10 @@
 <div>
     <br>
     <p>
-        A high-performance, zero-overhead <strong>event dispatcher</strong> library for <b>Rust</b> that implements the <em>observer pattern</em> with compile-time type safety and runtime efficiency.
+        A fast, type-safe <strong>event dispatcher</strong> library for <b>Rust</b> that implements the <em>observer pattern</em> with compile-time type safety and runtime efficiency.
     </p>
     <p>
-        This library enables decoupled, event-driven architectures by allowing components to communicate through strongly-typed events without direct dependencies. <b>Built for performance</b>, it uses <b>zero-cost abstractions</b> and <b>efficient memory management</b> to ensure event dispatch has <b>minimal runtime overhead</b>, making it suitable for high-throughput applications, real-time systems, and microservice architectures.
+        This library enables decoupled, event-driven architectures by allowing components to communicate through strongly-typed events without direct dependencies. <b>Built for performance</b>: the sync dispatch path allocates nothing on success and runs listeners with no lock held, making it suitable for high-throughput applications, real-time systems, and microservice architectures.
     </p>
     <p>
          This <strong>event dispatcher</strong> supports both <em>synchronous</em> and <em>asynchronous</em> event handling with a <em>priority-based</em> execution system that allows fine-grained control over listener execution order. 
@@ -49,7 +49,7 @@
 - **Async support**: *Full async/await compatibility*.
 - **Flexible**: *Support for sync, async, and priority-based listeners (FIFO within equal priority)*.
 - **Easy to use**: *Simple API and intuitive methods*.
-- **Performance**: *Optimized for high-throughput scenarios; subscribe is O(n), dispatch is read-lock-only*.
+- **Performance**: *Subscribe is O(n), dispatch is read-lock-only; see `docs/performance.md` for numbers and the multi-thread caveat*.
 - **Monitoring**: *Built-in metrics, middleware, and `loom`-verified concurrency invariants*.
 
 <br>
@@ -61,13 +61,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mod-events = "1.1.0"
+mod-events = "1.2"
 
 # For async support (default)
-mod-events = { version = "1.0.0", features = ["async"] }
+mod-events = { version = "1.2", features = ["async"] }
 
 # Sync-only build
-mod-events = { version = "1.0.0", default-features = false }
+mod-events = { version = "1.2", default-features = false }
 ```
 
 MSRV: Rust 1.81.
@@ -139,6 +139,20 @@ dispatcher.subscribe_async(|event: &MyEvent| async {
 let result = dispatcher.dispatch_async(MyEvent { /* ... */ }).await;
 ```
 
+Sync and async listeners are kept apart by the 1.x dispatch methods:
+
+| Method | Sync listeners (`on`, `subscribe`) | Async listeners (`subscribe_async`) |
+|---|---|---|
+| `emit`, `dispatch` | run | not run |
+| `dispatch_async` | not run | awaited |
+| `dispatch_async_all` (1.2.0) | run | awaited |
+
+`dispatch_async_all` runs both kinds in one priority order (FIFO within
+equal priority), and its `DispatchResult::listener_count()` matches
+`listener_count::<T>()`. The futures returned by `dispatch_async` and
+`dispatch_async_all` are `Send`, so they can be awaited inside
+`tokio::spawn`.
+
 ### Middleware
 
 ```rust
@@ -148,6 +162,10 @@ dispatcher.add_middleware(|event: &dyn Event| {
     true // Allow event to continue
 });
 ```
+
+A middleware that panics blocks the event: no listener runs, the panic
+does not reach the caller, and `dispatch` reports it as an error in the
+blocked `DispatchResult`.
 
 ### Error Handling
 

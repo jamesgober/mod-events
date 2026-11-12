@@ -44,7 +44,21 @@ impl DispatchResult {
         }
     }
 
+    /// Construct a result for a dispatch that was halted because a
+    /// middleware panicked. The panic is the single entry in `errors`.
+    pub(crate) fn blocked_by_panic(error: ListenerError) -> Self {
+        Self {
+            listener_count: 0,
+            errors: vec![error],
+            blocked: true,
+        }
+    }
+
     /// Whether the dispatch was halted by middleware.
+    ///
+    /// A middleware that panics also blocks the event (fail closed). In
+    /// that case [`Self::errors`] holds one error whose message starts
+    /// with `"middleware panicked: "`.
     #[must_use]
     pub fn is_blocked(&self) -> bool {
         self.blocked
@@ -67,12 +81,19 @@ impl DispatchResult {
     /// Number of listeners that returned `Err(_)` or panicked. A
     /// panicking listener contributes one error with the message
     /// prefix `"listener panicked: "`.
+    ///
+    /// On a blocked dispatch this is `0`, or `1` when the block was
+    /// caused by a panicking middleware (message prefix
+    /// `"middleware panicked: "`).
     #[must_use]
     pub fn error_count(&self) -> usize {
         self.errors.len()
     }
 
     /// Borrow every error produced by failing listeners, in dispatch order.
+    ///
+    /// When a middleware panicked, the dispatch is blocked and this
+    /// holds that single panic error instead.
     #[must_use]
     pub fn errors(&self) -> &[ListenerError] {
         &self.errors

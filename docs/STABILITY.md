@@ -15,6 +15,9 @@ This applies to:
   module: `EventDispatcher`, `Event`, `EventListener`,
   `AsyncEventListener`, `Priority`, `ListenerId`, `ListenerError`,
   `DispatchResult`, `EventMetadata`, `AsyncEventResult`.
+  (`EventListener` and `AsyncEventListener` are deprecated since
+  1.2.0, because no dispatcher method accepts them; they stay
+  available for the whole 1.x line.)
 - The trait implementations on those types (`Debug`, `Default`,
   `Clone`, etc.).
 - The behavioural contracts documented in each method's rustdoc
@@ -102,8 +105,9 @@ Non-determinism that is acceptable:
 - The `EventMetadata::last_dispatch: Instant` field. Time is not
   reproducible.
 - The exact contents of a panic-payload-derived `ListenerError`
-  message ("listener panicked: ..."). The prefix is part of the
-  contract; the suffix is whatever the panic carried.
+  message ("listener panicked: ..." or, since 1.2.0, "middleware
+  panicked: ..."). The prefix is part of the contract; the suffix is
+  whatever the panic carried.
 
 ## Panic safety
 
@@ -117,12 +121,33 @@ contract and cannot weaken in the `1.x` line.
 fire-and-forget listeners are caught and dropped, never propagated
 to the caller). This is also locked.
 
+Since 1.2.0, `dispatch_async_all` gives the same guarantee for both
+the sync and async listeners it runs.
+
+Since 1.2.0, each middleware call is wrapped in `catch_unwind` too. A
+middleware that panics blocks the event (fail closed): no listener
+runs, later middleware does not run, and the panic never reaches the
+caller. `dispatch`, `dispatch_async` and `dispatch_async_all` return a
+blocked `DispatchResult` whose `errors()` holds one error with the
+prefix `"middleware panicked: "`; `emit` discards it. Before 1.2.0 a
+middleware panic unwound into the caller.
+
+Panic safety relies on unwinding. In a binary built with
+`panic = "abort"`, a panicking listener or middleware aborts the
+process before the dispatcher can catch it.
+
+The dispatcher has no recursion guard. A listener that dispatches the
+event type it listens to, without a stop condition, recurses until the
+thread's stack overflows, which aborts the process.
+
 The dispatcher itself never panics through normal use. It does not
 panic on:
 
 - Unknown `ListenerId` passed to `unsubscribe` (returns `false`).
 - Empty event-type registry (returns immediately).
 - Middleware returning `false` (returns `DispatchResult::is_blocked()`).
+- Middleware panicking (returns a blocked result with one error; see
+  above).
 - Lock acquisition (the `parking_lot` primitive does not poison).
 
 ## Deprecation policy

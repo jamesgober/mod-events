@@ -104,14 +104,26 @@ impl From<String> for ListenerError {
 /// `Box<dyn Any + Send>`. The dispatcher uses this helper to turn that
 /// payload into the same `ListenerError` shape a well-behaved listener
 /// would have returned, so `DispatchResult::errors()` is the single
-/// place the caller has to look for failures — panics included.
+/// place the caller has to look for failures, panics included.
 ///
-/// Most panics carry a `&'static str` (from `panic!("…")`) or a
+/// Most panics carry a `&'static str` (from `panic!("...")`) or a
 /// `String` (from `panic!("{}", x)`); both are extracted directly.
-/// Anything else degrades to a generic `"listener panicked"` message.
+/// Anything else degrades to a generic message.
 pub(crate) fn panic_payload_to_listener_error(
     payload: Box<dyn std::any::Any + Send>,
 ) -> ListenerError {
+    panic_payload_to_error("listener panicked: ", payload)
+}
+
+/// Middleware counterpart of [`panic_payload_to_listener_error`]. The
+/// message starts with `"middleware panicked: "`.
+pub(crate) fn panic_payload_to_middleware_error(
+    payload: Box<dyn std::any::Any + Send>,
+) -> ListenerError {
+    panic_payload_to_error("middleware panicked: ", payload)
+}
+
+fn panic_payload_to_error(prefix: &str, payload: Box<dyn std::any::Any + Send>) -> ListenerError {
     let detail = if let Some(s) = payload.downcast_ref::<&'static str>() {
         (*s).to_owned()
     } else if let Some(s) = payload.downcast_ref::<String>() {
@@ -119,5 +131,5 @@ pub(crate) fn panic_payload_to_listener_error(
     } else {
         String::from("<non-string panic payload>")
     };
-    ListenerError::message(format!("listener panicked: {detail}"))
+    ListenerError::message(format!("{prefix}{detail}"))
 }

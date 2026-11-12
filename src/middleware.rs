@@ -6,7 +6,9 @@
 //! the internal manager type and its function-alias type are not part
 //! of the public surface.
 
-use crate::Event;
+use crate::error::panic_payload_to_middleware_error;
+use crate::{Event, ListenerError};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 /// Middleware function type stored internally by the dispatcher.
@@ -71,9 +73,31 @@ impl MiddlewareManager {
     }
 }
 
-/// Run every middleware in `chain` in order. Returns `true` if the
-/// event should continue, `false` as soon as one middleware blocks it.
+/// Outcome of running the middleware chain for one dispatch.
+pub(crate) enum Verdict {
+    /// Every middleware returned `true`.
+    Allow,
+    /// A middleware returned `false`.
+    Block,
+    /// A middleware panicked. The event is blocked (fail closed) and the
+    /// panic is reported as an error in the `DispatchResult`.
+    Panicked(ListenerError),
+}
+
+/// Run every middleware in `chain` in order. Stops at the first
+/// middleware that blocks the event or panics.
+///
+/// Middleware is user code, so each call is wrapped in `catch_unwind`
+/// the same way listener calls are: a panicking middleware never unwinds
+/// into the caller of `emit`, `dispatch` or `dispatch_async`.
 #[inline]
-pub(crate) fn process(chain: &[MiddlewareFunction], event: &dyn Event) -> bool {
-    chain.iter().all(|m| m(event))
+pub(crate) fn process(chain: &[MiddlewareFunction], event: &dyn Event) -> Verdict {
+    for middleware in chain {
+        match catch_unwind(AssertUnwindSafe(|| middleware(event))) {
+            Ok(true) => {}
+            Ok(false) => return Verdict::Block,
+            Err(payload) => return Verdict::Panicked(panic_payload_to_middleware_error(payload)),
+        }
+    }
+    Verdict::Allow
 }

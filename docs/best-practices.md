@@ -82,7 +82,7 @@ struct UserRegistrationHandler {
     analytics: Analytics,
 }
 
-impl EventListener<UserRegistered> for UserRegistrationHandler {
+impl UserRegistrationHandler {
     fn handle(&self, event: &UserRegistered) -> Result<(), ListenerError> {
         self.email_service
             .send_welcome(&event.email)
@@ -93,7 +93,14 @@ impl EventListener<UserRegistered> for UserRegistrationHandler {
         Ok(())
     }
 }
+
+// Register the struct through a closure.
+let handler = UserRegistrationHandler { email_service, analytics };
+dispatcher.subscribe(move |event: &UserRegistered| handler.handle(event));
 ```
+
+Plain methods are enough here. The `EventListener` trait is deprecated
+since 1.2.0 because no dispatcher method accepts it.
 
 ## Error Handling
 
