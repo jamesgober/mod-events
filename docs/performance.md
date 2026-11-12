@@ -19,8 +19,10 @@ mod-events is designed for high-performance scenarios. This guide covers perform
   allocate). Allocation happens only when a listener returns `Err` or
   panics; a fully-successful dispatch performs zero heap allocations
   for the result.
-- **Lock-free reads** - Multiple threads can read concurrently
-  through `parking_lot::RwLock::read`.
+- **Shared reads** - Multiple threads can dispatch concurrently: each
+  dispatch takes `parking_lot::RwLock` read locks (not lock-free; each
+  read lock and unlock is an atomic update of the lock word) and runs
+  listeners with no lock held.
 
 ### Measured Throughput
 
@@ -75,7 +77,7 @@ cargo test --release --test benchmarks --features async -- --nocapture
 - **Dispatcher**: ~200 bytes base overhead.
 - **Per listener**: one `Arc<dyn Fn>` (16 bytes pointer + reference counts + closure size) plus ~16 bytes of metadata in `ListenerWrapper`.
 - **Per event type**: one `Arc<Vec<_>>` listener list, plus one `Arc<EventMetricsCounters>` containing two `AtomicU64`s, an `Instant`, a `TypeId`, and a `&'static str` event name.
-- **During dispatch**: zero allocations on the success path, sync and async. Both paths take one reference-count increment on the per-type listener list instead of copying it.
+- **During dispatch**: the sync success path (`emit`, `dispatch`) performs zero heap allocations. The async path allocates one boxed future (`Box::pin`) per async listener per dispatch. Both paths take one reference-count increment on the per-type listener list instead of copying it.
 
 ## Optimization Tips
 
@@ -175,83 +177,21 @@ println!("Dispatch took: {:?}", duration);
 
 ### Benchmark Results Analysis
 
-Our benchmarks show:
+The figures in [Measured Throughput](#measured-throughput) come from
+`benches/dispatch_benchmark.rs` (criterion, release profile). Debug
+builds are several times slower; measure release builds.
 
-```
-Criterion (optimized):
-- Single listener: 262ns (3.8M events/sec)
-- 10 listeners: 344ns (2.9M events/sec)
+### Scaling Across Threads
 
-Manual tests (debug mode):
-- Single listener: 1.07μs (928K events/sec)
-- 10 listeners: 1.96μs (510K events/sec)
-```
-
-**Key Takeaway:** Release builds are **3-4x faster** than debug builds.
-
-## Comparing to Other Solutions
-
-| Feature | mod-events | Channel-based | Callback-based | Node.js | Redis |
-|---------|------------|---------------|----------------|---------|-------|
-| **Latency** | **262ns-1μs** | 1-10μs | 1-5μs | 2-5μs | 100-500μs |
-| **Throughput** | **3.8M/sec** | 100K-1M/sec | 1-5M/sec | 200K-500K/sec | 100K/sec |
-| **Type Safety** | Compile-time | Runtime | Runtime | Runtime | Runtime |
-| **Performance** | Zero-cost | Allocation overhead | Direct calls | V8 overhead | Network overhead |
-| **Async Support** | Native | Native | Manual | Native | Native |
-| **Priority System** | Built-in | Manual | Manual | Manual | Manual |
-| **Thread Safety** | Built-in | Built-in | Manual | Single-threaded | Built-in |
-
-## Real-World Performance
-
-### Game Engine (60 FPS)
-```rust
-// Handle 1000+ events per frame
-for _ in 0..1000 {
-    dispatcher.emit(PlayerMoved { ... });
-}
-// Completes in ~1ms (1000 × 1μs)
-// Leaves 15.67ms for other game logic
-```
-
-### Web Server (High Throughput)
-```rust
-// Handle user actions
-dispatcher.emit(UserAction { ... });
-// ~1μs per dispatch
-// Can handle 1000 events per millisecond
-```
-
-### IoT System (Resource Constrained)
-```rust
-// Minimal memory footprint
-// ~200 bytes base + ~100 bytes per listener
-// < 1KB total overhead for typical usage
-```
-
-### High-Frequency Trading
-```rust
-// Sub-microsecond latency requirement
-dispatcher.emit(MarketUpdate { ... });
-// 262ns latency leaves 9.738μs for other processing
-// in a 10μs budget
-```
-
-## Performance Characteristics by Use Case
-
-### Latency-Critical Applications
-- **Best choice**: Use `emit()` for fire-and-forget
-- **Expected latency**: 262ns - 1μs
-- **Suitable for**: Game engines, HFT, real-time systems
-
-### High-Throughput Applications
-- **Best choice**: Batch operations with `emit()`
-- **Expected throughput**: 1M+ events/second
-- **Suitable for**: Analytics, logging, monitoring
-
-### Mixed Workloads
-- **Best choice**: Combine `emit()` and `dispatch()` as needed
-- **Expected performance**: 500K+ events/second
-- **Suitable for**: Web servers, microservices
+Dispatching one event type from many threads at once does not scale
+linearly. Each dispatch updates a few shared atomics (the read-lock
+words, the listener list's reference count, and the per-type metrics
+counters), and every thread dispatching the same type writes the same
+cache lines. On a loaded 1.1.0 test machine, 8 threads calling `emit`
+on one event type reached about the same total throughput as 1 thread.
+Dispatches of different event types share fewer lines. If one event
+type is very hot across many threads, measure before relying on
+multi-threaded throughput.
 
 ## When NOT to Use mod-events
 
@@ -279,23 +219,13 @@ dispatcher.emit(MarketUpdate { ... });
 
 ## Conclusion
 
-mod-events delivers **exceptional performance** for in-process event handling:
+mod-events is an in-process event dispatcher with:
 
-- **Sub-microsecond latency** (262ns-1μs)
-- **Multi-million events per second** throughput
-- **Minimal memory overhead** (~200 bytes base)
-- **Zero-cost abstractions** with compile-time optimization
-- **Thread-safe concurrent access** with minimal contention
-
-It excels in scenarios requiring:
-- **Ultra-low latency** (real-time systems, gaming, HFT)
-- **High throughput** (analytics, monitoring, logging)
-- **Type safety** (compile-time guarantees)
-- **Minimal resource usage** (embedded, IoT, resource-constrained)
-- **Async/await compatibility** (modern Rust applications)
-
-**Bottom Line:** mod-events is one of the fastest event systems available in any language, making it ideal for performance-critical applications where every nanosecond counts.
-
+- Sub-microsecond `emit` and `dispatch` on the measured hardware (see
+  the table above for numbers and method).
+- No heap allocation on the sync success path.
+- Listeners and middleware run with no lock held.
+- Compile-time typed events and listeners.
 
 <br>
 

@@ -2,7 +2,7 @@
 
 use crate::error::panic_payload_to_listener_error;
 use crate::metrics::EventMetricsCounters;
-use crate::middleware::{self, MiddlewareManager};
+use crate::middleware::{self, MiddlewareManager, Verdict};
 use crate::type_id_map::TypeIdMap;
 use crate::{
     DispatchResult, Event, EventMetadata, ListenerError, ListenerId, ListenerWrapper, Priority,
@@ -16,6 +16,22 @@ use std::sync::Arc;
 
 #[cfg(feature = "async")]
 use crate::AsyncListenerWrapper;
+
+/// Source of listener ids for every dispatcher in the process.
+///
+/// One process-wide counter (rather than one per dispatcher) means a
+/// [`ListenerId`] issued by one dispatcher never matches a listener of
+/// another, so `unsubscribe` on the wrong dispatcher returns `false`
+/// instead of removing an unrelated listener. Ids still increase in
+/// registration order within each dispatcher, which
+/// `dispatch_async_all` relies on to keep FIFO order across sync and
+/// async listeners of equal priority.
+static NEXT_LISTENER_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+fn next_listener_id() -> usize {
+    NEXT_LISTENER_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Listeners for one event type, in descending priority order (FIFO
 /// within equal priority).
@@ -78,7 +94,6 @@ pub struct EventDispatcher {
     listeners: RwLock<TypeIdMap<ListenerList>>,
     #[cfg(feature = "async")]
     async_listeners: RwLock<TypeIdMap<AsyncListenerList>>,
-    next_id: AtomicUsize,
     // Per-event-type counters. The dispatch hot path records into them
     // under the map's read lock (atomics only, no user code); the write
     // lock is taken once per event type to insert the entry. The `Arc`
@@ -99,7 +114,6 @@ impl EventDispatcher {
             listeners: RwLock::new(TypeIdMap::default()),
             #[cfg(feature = "async")]
             async_listeners: RwLock::new(TypeIdMap::default()),
-            next_id: AtomicUsize::new(0),
             metrics: RwLock::new(TypeIdMap::default()),
             middleware: RwLock::new(MiddlewareManager::new()),
             has_middleware: AtomicBool::new(false),
@@ -148,7 +162,7 @@ impl EventDispatcher {
         F: Fn(&T) -> Result<(), ListenerError> + Send + Sync + 'static,
     {
         let type_id = TypeId::of::<T>();
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = next_listener_id();
 
         let wrapper = ListenerWrapper::new(listener, priority, id);
 
@@ -291,7 +305,7 @@ impl EventDispatcher {
         Fut: std::future::Future<Output = Result<(), ListenerError>> + Send + 'static,
     {
         let type_id = TypeId::of::<T>();
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = next_listener_id();
 
         let wrapper = AsyncListenerWrapper::new(listener, priority, id);
 
@@ -311,13 +325,21 @@ impl EventDispatcher {
         ListenerId::new(id, type_id)
     }
 
-    /// Dispatch an event synchronously.
+    /// Dispatch an event synchronously to the **sync listeners only**.
     ///
     /// Runs every listener registered through [`Self::on`],
     /// [`Self::subscribe`], or [`Self::subscribe_with_priority`] for `T`,
     /// in descending priority order, and returns a [`DispatchResult`]
-    /// containing per-listener outcomes. Async listeners are not invoked
-    /// here; they only run through `dispatch_async`.
+    /// containing per-listener outcomes.
+    ///
+    /// Listeners registered with `subscribe_async` are **not** run and
+    /// are not counted in the result. Sync code cannot await them; use
+    /// `dispatch_async_all` (requires the `async` feature) to run both
+    /// kinds.
+    ///
+    /// If a middleware blocks the event, no listener runs and the result
+    /// is blocked. A panicking middleware blocks the event too, and its
+    /// panic is reported in [`DispatchResult::errors`].
     ///
     /// # Example
     ///
@@ -349,8 +371,8 @@ impl EventDispatcher {
         self.update_metrics(&event);
 
         // Check middleware
-        if !self.check_middleware(&event) {
-            return DispatchResult::blocked();
+        if let Some(blocked) = self.gate(&event) {
+            return blocked;
         }
 
         let Some(event_listeners) = self.listener_snapshot::<T>() else {
@@ -364,24 +386,25 @@ impl EventDispatcher {
         let mut errors: Vec<ListenerError> = Vec::new();
 
         for listener in event_listeners.iter() {
-            // `catch_unwind` keeps a panicking listener from unwinding
-            // into the caller. Panics are converted into the same
-            // `ListenerError` shape a well-behaved listener would have
-            // returned, so the caller's `DispatchResult::errors()` is
-            // the single place to look for failures. No registry lock
-            // is held here, so a panic cannot leave one held.
-            match catch_unwind(AssertUnwindSafe(|| (listener.handler)(event_any))) {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => errors.push(err),
-                Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
+            if let Some(err) = run_listener(listener, event_any) {
+                errors.push(err);
             }
         }
 
         DispatchResult::new(event_listeners.len(), errors)
     }
 
-    /// Dispatch an event asynchronously and await every async listener
-    /// in priority order (requires the `async` feature).
+    /// Dispatch an event asynchronously to the **async listeners only**
+    /// and await each one in priority order (requires the `async`
+    /// feature).
+    ///
+    /// Listeners registered with [`Self::on`] or [`Self::subscribe`] are
+    /// **not** run and are not counted in the result. Use
+    /// [`Self::dispatch_async_all`] to run sync and async listeners
+    /// together in one priority order.
+    ///
+    /// The returned future is `Send`, so it can be awaited inside
+    /// `tokio::spawn` or any other multi-threaded executor task.
     ///
     /// Listeners are awaited **sequentially** in descending priority
     /// order. This preserves the priority contract — a high-priority
@@ -398,10 +421,8 @@ impl EventDispatcher {
     /// [`DispatchResult::errors`] with the prefix
     /// `"listener panicked: "`. Subsequent listeners still run.
     ///
-    /// Sync listeners registered via [`Self::on`] / [`Self::subscribe`]
-    /// are not invoked here; only listeners registered through
-    /// [`Self::subscribe_async`] / [`Self::subscribe_async_with_priority`]
-    /// are awaited.
+    /// A panicking middleware blocks the event, as on the sync path, and
+    /// its panic is reported in [`DispatchResult::errors`].
     ///
     /// # Example
     ///
@@ -438,8 +459,8 @@ impl EventDispatcher {
         self.update_metrics(&event);
 
         // Check middleware
-        if !self.check_middleware(&event) {
-            return DispatchResult::blocked();
+        if let Some(blocked) = self.gate(&event) {
+            return blocked;
         }
 
         // Snapshot the listener list (one reference-count increment, no
@@ -447,42 +468,114 @@ impl EventDispatcher {
         let Some(handlers) = self.async_listener_snapshot::<T>() else {
             return DispatchResult::new(0, Vec::new());
         };
-        let event_any: &dyn Any = &event;
-
-        // Wrap each listener in `catch_unwind` so a panicking listener
-        // becomes a `ListenerError` in `DispatchResult` rather than
-        // unwinding the dispatching task. Mirrors the panic-safety
-        // wrapping on the sync `dispatch` path. Two places can panic:
-        // the listener closure itself, which runs synchronously to build
-        // the future, and the future while it is polled. Both are
-        // covered.
-        //
-        // `AssertUnwindSafe` is required because the listener future
-        // closes over arbitrary user state that may not implement
-        // `UnwindSafe`. The contract is: if a listener panics, the
-        // dispatcher catches it and reports it; the listener author is
-        // responsible for not leaving captured state in a broken
-        // condition before panicking. Same contract as the sync path.
-        use futures_util::future::FutureExt;
+        // `Send + Sync` on the trait object keeps this reference, and so
+        // the whole future, `Send` while it is held across `.await`.
+        let event_any: &(dyn Any + Send + Sync) = &event;
 
         // `errors` stays empty (and unallocated) on the success path.
         let mut errors: Vec<ListenerError> = Vec::new();
         for listener in handlers.iter() {
-            let future = match catch_unwind(AssertUnwindSafe(|| (listener.handler)(event_any))) {
-                Ok(future) => future,
-                Err(payload) => {
-                    errors.push(panic_payload_to_listener_error(payload));
-                    continue;
-                }
-            };
-            match AssertUnwindSafe(future).catch_unwind().await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => errors.push(err),
-                Err(payload) => errors.push(panic_payload_to_listener_error(payload)),
+            if let Some(err) = run_async_listener(listener, event_any).await {
+                errors.push(err);
             }
         }
 
         DispatchResult::new(handlers.len(), errors)
+    }
+
+    /// Dispatch an event to **both** sync and async listeners and await
+    /// them in one priority order (requires the `async` feature).
+    ///
+    /// Listeners registered through [`Self::on`], [`Self::subscribe`],
+    /// [`Self::subscribe_async`] and their priority variants all run, in
+    /// descending priority order. Listeners of equal priority run in
+    /// registration order, whichever kind they are. Sync listeners are
+    /// called inline; async listeners are awaited one at a time, as in
+    /// [`Self::dispatch_async`].
+    ///
+    /// [`DispatchResult::listener_count`] counts both kinds, so it agrees
+    /// with [`Self::listener_count`] for the same snapshot. Panic safety,
+    /// middleware handling and the snapshot rules are the same as for
+    /// [`Self::dispatch`] and [`Self::dispatch_async`]. The returned
+    /// future is `Send`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "async")]
+    /// # async fn doc_example() {
+    /// use mod_events::{Event, EventDispatcher};
+    ///
+    /// #[derive(Debug, Clone)]
+    /// struct OrderShipped { order_id: u64 }
+    ///
+    /// impl Event for OrderShipped {
+    ///     fn as_any(&self) -> &dyn std::any::Any { self }
+    /// }
+    ///
+    /// let dispatcher = EventDispatcher::new();
+    /// dispatcher.on(|event: &OrderShipped| {
+    ///     println!("audit: order {} shipped", event.order_id);
+    /// });
+    /// dispatcher.subscribe_async(|event: &OrderShipped| {
+    ///     let id = event.order_id;
+    ///     async move {
+    ///         println!("notifying customer about order {}", id);
+    ///         Ok(())
+    ///     }
+    /// });
+    ///
+    /// let result = dispatcher
+    ///     .dispatch_async_all(OrderShipped { order_id: 42 })
+    ///     .await;
+    /// assert_eq!(result.listener_count(), 2);
+    /// assert!(result.all_succeeded());
+    /// # }
+    /// ```
+    #[cfg(feature = "async")]
+    pub async fn dispatch_async_all<T: Event>(&self, event: T) -> DispatchResult {
+        self.update_metrics(&event);
+
+        if let Some(blocked) = self.gate(&event) {
+            return blocked;
+        }
+
+        let sync_snapshot = self.listener_snapshot::<T>();
+        let async_snapshot = self.async_listener_snapshot::<T>();
+        let sync_list: &[ListenerWrapper] = sync_snapshot.as_deref().map_or(&[], Vec::as_slice);
+        let async_list: &[AsyncListenerWrapper] =
+            async_snapshot.as_deref().map_or(&[], Vec::as_slice);
+        let event_any: &(dyn Any + Send + Sync) = &event;
+
+        let mut errors: Vec<ListenerError> = Vec::new();
+        let (mut next_sync, mut next_async) = (0, 0);
+        loop {
+            // Both lists are sorted by descending priority, FIFO within a
+            // priority. Merge them: higher priority first, and on a tie
+            // the earlier registration (lower id) first.
+            let take_sync = match (sync_list.get(next_sync), async_list.get(next_async)) {
+                (Some(s), Some(a)) => {
+                    s.priority > a.priority || (s.priority == a.priority && s.id < a.id)
+                }
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let outcome = if take_sync {
+                let listener = &sync_list[next_sync];
+                next_sync += 1;
+                run_listener(listener, event_any)
+            } else {
+                let listener = &async_list[next_async];
+                next_async += 1;
+                run_async_listener(listener, event_any).await
+            };
+            if let Some(err) = outcome {
+                errors.push(err);
+            }
+        }
+
+        DispatchResult::new(sync_list.len() + async_list.len(), errors)
     }
 
     /// Fire and forget — dispatch without inspecting the result.
@@ -492,7 +585,10 @@ impl EventDispatcher {
     /// returned by failing listeners are discarded; if you need them,
     /// call [`Self::dispatch`] instead.
     ///
-    /// Like [`Self::dispatch`], only sync listeners are invoked.
+    /// Like [`Self::dispatch`], only **sync listeners** are invoked;
+    /// listeners registered with `subscribe_async` are not run. A
+    /// panicking middleware blocks the event and the panic is discarded
+    /// along with the other outcomes; it never reaches the caller.
     ///
     /// # Example
     ///
@@ -520,7 +616,7 @@ impl EventDispatcher {
         self.update_metrics(&event);
 
         // Check middleware
-        if !self.check_middleware(&event) {
+        if self.gate(&event).is_some() {
             return;
         }
 
@@ -541,6 +637,12 @@ impl EventDispatcher {
     ///
     /// Middleware functions receive events and return `true` to allow
     /// processing or `false` to block the event.
+    ///
+    /// Each middleware call is wrapped in `catch_unwind`. A middleware
+    /// that panics blocks the event (fail closed): no listener runs, the
+    /// panic does not reach the caller, and `dispatch`, `dispatch_async`
+    /// and `dispatch_async_all` report it as an error whose message
+    /// starts with `"middleware panicked: "`.
     ///
     /// # Example
     ///
@@ -630,6 +732,11 @@ impl EventDispatcher {
 
     /// Get the total number of listeners (sync + async, when the
     /// `async` feature is enabled) registered for an event type.
+    ///
+    /// This counts both kinds, while [`Self::dispatch`] and
+    /// [`Self::emit`] run only the sync ones and `dispatch_async` only
+    /// the async ones. `dispatch_async_all` runs every listener counted
+    /// here.
     ///
     /// # Example
     ///
@@ -839,16 +946,65 @@ impl EventDispatcher {
     /// Run the middleware chain. The chain is snapshotted under the read
     /// lock and executed after the guard is released, so middleware may
     /// call back into the dispatcher.
+    ///
+    /// Returns `None` when the event may proceed, or the blocked
+    /// [`DispatchResult`] to hand back when a middleware blocked it or
+    /// panicked.
     #[inline]
-    fn check_middleware(&self, event: &dyn Event) -> bool {
+    fn gate(&self, event: &dyn Event) -> Option<DispatchResult> {
         if !self.has_middleware.load(Ordering::Acquire) {
-            return true;
+            return None;
         }
-        let chain = self.middleware.read().snapshot();
-        match chain {
-            None => true,
-            Some(chain) => middleware::process(&chain, event),
+        let chain = self.middleware.read().snapshot()?;
+        match middleware::process(&chain, event) {
+            Verdict::Allow => None,
+            Verdict::Block => Some(DispatchResult::blocked()),
+            Verdict::Panicked(err) => Some(DispatchResult::blocked_by_panic(err)),
         }
+    }
+}
+
+/// Call one sync listener. `catch_unwind` keeps a panicking listener
+/// from unwinding into the caller; the panic is converted into the same
+/// `ListenerError` shape a well-behaved listener would have returned, so
+/// `DispatchResult::errors()` is the single place to look for failures.
+/// No registry lock is held here, so a panic cannot leave one held.
+#[inline]
+fn run_listener(listener: &ListenerWrapper, event: &dyn Any) -> Option<ListenerError> {
+    match catch_unwind(AssertUnwindSafe(|| (listener.handler)(event))) {
+        Ok(Ok(())) => None,
+        Ok(Err(err)) => Some(err),
+        Err(payload) => Some(panic_payload_to_listener_error(payload)),
+    }
+}
+
+/// Call one async listener and await its future.
+///
+/// Two places can panic: the listener closure itself, which runs
+/// synchronously to build the future, and the future while it is
+/// polled. Both are caught and reported as a `ListenerError`, so a
+/// panicking listener never unwinds the dispatching task.
+///
+/// `AssertUnwindSafe` is required because the listener future closes
+/// over arbitrary user state that may not implement `UnwindSafe`. The
+/// contract is the same as on the sync path: the dispatcher catches and
+/// reports the panic; the listener author is responsible for not leaving
+/// captured state broken before panicking.
+#[cfg(feature = "async")]
+async fn run_async_listener(
+    listener: &AsyncListenerWrapper,
+    event: &(dyn Any + Send + Sync),
+) -> Option<ListenerError> {
+    use futures_util::future::FutureExt;
+
+    let future = match catch_unwind(AssertUnwindSafe(|| (listener.handler)(event))) {
+        Ok(future) => future,
+        Err(payload) => return Some(panic_payload_to_listener_error(payload)),
+    };
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(Ok(())) => None,
+        Ok(Err(err)) => Some(err),
+        Err(payload) => Some(panic_payload_to_listener_error(payload)),
     }
 }
 

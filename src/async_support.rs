@@ -14,9 +14,17 @@ pub type AsyncEventResult<'a> =
 ///
 /// This trait is only available when the `async` feature is enabled.
 ///
+/// **Deprecated since 1.2.0.** No [`EventDispatcher`](crate::EventDispatcher)
+/// method accepts this trait, so an implementation cannot be registered
+/// directly and its `priority()` is never read by the dispatcher. Use a
+/// closure with `subscribe_async` or `subscribe_async_with_priority`
+/// instead. The trait stays in 1.x for compatibility and is planned for
+/// removal in 2.0.
+///
 /// # Example
 ///
 /// ```rust
+/// # #![allow(deprecated)]
 /// # #[cfg(feature = "async")]
 /// # {
 /// use mod_events::{AsyncEventListener, AsyncEventResult, Event, ListenerError, Priority};
@@ -45,6 +53,11 @@ pub type AsyncEventResult<'a> =
 /// }
 /// # }
 /// ```
+#[deprecated(
+    since = "1.2.0",
+    note = "no dispatcher method accepts this trait; register a closure with \
+            `subscribe_async` or `subscribe_async_with_priority` instead"
+)]
 pub trait AsyncEventListener<T: Event>: Send + Sync {
     /// Handle the event asynchronously.
     fn handle<'a>(&'a self, event: &'a T) -> AsyncEventResult<'a>;
@@ -58,10 +71,17 @@ pub trait AsyncEventListener<T: Event>: Send + Sync {
     }
 }
 
-/// Type-erased async listener body. Receives the event as `&dyn Any`
-/// built by the dispatcher from the concrete `&T`; see
-/// `ListenerHandler` in `listener.rs`.
-type AsyncEventHandler = dyn for<'a> Fn(&'a dyn Any) -> AsyncEventResult<'a> + Send + Sync;
+/// Type-erased async listener body. Receives the event as
+/// `&(dyn Any + Send + Sync)` built by the dispatcher from the concrete
+/// `&T`; see `ListenerHandler` in `listener.rs`.
+///
+/// The `Send + Sync` bound on the argument matters: the dispatcher holds
+/// this reference across `.await` points, and a plain `&dyn Any` is not
+/// `Send`, which made the `dispatch_async` future `!Send` (it could not
+/// run inside `tokio::spawn`). Every `Event` is `Send + Sync`, so the
+/// bound costs nothing.
+type AsyncEventHandler =
+    dyn for<'a> Fn(&'a (dyn Any + Send + Sync)) -> AsyncEventResult<'a> + Send + Sync;
 
 /// A registered async listener plus its ordering metadata. `Clone` is a
 /// reference-count increment; see `ListenerWrapper`.
@@ -90,7 +110,7 @@ impl AsyncListenerWrapper {
         Fut: Future<Output = Result<(), ListenerError>> + Send + 'static,
     {
         Self {
-            handler: Arc::new(move |event: &dyn Any| {
+            handler: Arc::new(move |event: &(dyn Any + Send + Sync)| {
                 if let Some(concrete_event) = event.downcast_ref::<T>() {
                     Box::pin(listener(concrete_event))
                 } else {

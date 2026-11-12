@@ -4,16 +4,20 @@ use crate::{Event, ListenerError, Priority};
 use std::any::Any;
 use std::sync::Arc;
 
-/// Trait for synchronous event listeners
+/// Trait for synchronous event listeners.
 ///
-/// Implement this trait to create reusable event listeners.
-/// For simple cases, you can use closures with the dispatcher's
-/// `subscribe` or `on` methods instead.
+/// **Deprecated since 1.2.0.** No [`EventDispatcher`](crate::EventDispatcher)
+/// method accepts this trait, so an implementation cannot be registered
+/// directly and its `priority()` is never read by the dispatcher. Wrap
+/// the listener in a closure and pass the priority yourself, as shown
+/// below. The trait stays in 1.x for compatibility and is planned for
+/// removal in 2.0.
 ///
 /// # Example
 ///
 /// ```rust
-/// use mod_events::{Event, EventListener, ListenerError, Priority};
+/// # #![allow(deprecated)]
+/// use mod_events::{Event, EventDispatcher, EventListener, ListenerError, Priority};
 ///
 /// #[derive(Debug, Clone)]
 /// struct UserRegistered {
@@ -40,7 +44,18 @@ use std::sync::Arc;
 ///         Priority::High
 ///     }
 /// }
+///
+/// // Register it through a closure.
+/// let dispatcher = EventDispatcher::new();
+/// let notifier = EmailNotifier;
+/// let priority = notifier.priority();
+/// dispatcher.subscribe_with_priority(move |e: &UserRegistered| notifier.handle(e), priority);
 /// ```
+#[deprecated(
+    since = "1.2.0",
+    note = "no dispatcher method accepts this trait; register a closure instead, \
+            e.g. `dispatcher.subscribe_with_priority(move |e| listener.handle(e), listener.priority())`"
+)]
 pub trait EventListener<T: Event>: Send + Sync {
     /// Handle the event.
     ///

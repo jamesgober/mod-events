@@ -1,6 +1,7 @@
 //! # Mod Events
 //!
-//! A high-performance, zero-overhead event dispatcher library for Rust.
+//! A fast, type-safe, thread-safe event dispatcher for Rust, with sync
+//! and async listeners.
 //!
 //! ## Features
 //!
@@ -88,6 +89,9 @@ pub use async_support::*;
 pub mod prelude {
     pub use crate::{Event, EventDispatcher, ListenerError, Priority};
 
+    // Deprecated since 1.2.0; kept in the prelude so 1.x imports keep
+    // compiling. A glob import of the prelude does not warn.
     #[cfg(feature = "async")]
+    #[allow(deprecated)]
     pub use crate::AsyncEventListener;
 }

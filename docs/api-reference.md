@@ -182,7 +182,8 @@ let id = dispatcher.subscribe_async_with_priority(|event: &MyEvent| async {
 
 #### `emit<T: Event>(&self, event: T)`
 
-Fire and forget event dispatch - fastest method.
+Fire and forget event dispatch - fastest method. Runs **sync listeners
+only**; listeners registered with `subscribe_async` are not run.
 
 **Parameters:**
 - `event: T` - The event to dispatch
@@ -195,7 +196,9 @@ dispatcher.emit(MyEvent {
 
 #### `dispatch<T: Event>(&self, event: T) -> DispatchResult`
 
-Dispatch an event and return results.
+Dispatch an event to the **sync listeners only** and return results.
+Async listeners are not run and are not counted in the result; use
+`dispatch_async_all` to run both kinds.
 
 **Parameters:**
 - `event: T` - The event to dispatch
@@ -216,7 +219,10 @@ if result.all_succeeded() {
 
 *Available with the `async` feature*
 
-Dispatch an event asynchronously.
+Dispatch an event to the **async listeners only** and await each one
+in priority order. Sync listeners (`on`, `subscribe`) are not run and
+are not counted in the result. The future is `Send` (since 1.2.0), so it
+can be awaited inside `tokio::spawn`.
 
 **Parameters:**
 - `event: T` - The event to dispatch
@@ -228,6 +234,42 @@ let result = dispatcher.dispatch_async(MyEvent {
     message: "Async Hello".to_string(),
 }).await;
 ```
+
+#### `dispatch_async_all<T: Event>(&self, event: T) -> impl Future<Output = DispatchResult>`
+
+*Available with the `async` feature. Added in 1.2.0.*
+
+Dispatch an event to **both** sync and async listeners in one priority
+order. Listeners of equal priority run in registration order,
+whichever kind they are. Sync listeners are called inline; async
+listeners are awaited one at a time. `DispatchResult::listener_count()`
+counts both kinds, so it matches `listener_count::<T>()`. The future is
+`Send`.
+
+**Panics:** none. Listener and middleware panics are caught as on the
+other dispatch methods.
+
+```rust
+dispatcher.on(|e: &MyEvent| println!("sync: {}", e.message));
+dispatcher.subscribe_async(|e: &MyEvent| {
+    let msg = e.message.clone();
+    async move {
+        println!("async: {msg}");
+        Ok(())
+    }
+});
+
+let result = dispatcher.dispatch_async_all(MyEvent {
+    message: "both".to_string(),
+}).await;
+assert_eq!(result.listener_count(), 2);
+```
+
+| Method | Sync listeners | Async listeners |
+|---|---|---|
+| `emit`, `dispatch` | run | not run |
+| `dispatch_async` | not run | awaited |
+| `dispatch_async_all` | run | awaited |
 
 ### Listener Management
 
@@ -281,6 +323,13 @@ dispatcher.clear();
 #### `add_middleware<F>(&self, middleware: F)`
 
 Add middleware that can filter or transform events.
+
+**Panics:** none. Each middleware call is wrapped in `catch_unwind`
+(since 1.2.0). A middleware that panics blocks the event: no listener
+and no later middleware runs, and `dispatch`, `dispatch_async` and
+`dispatch_async_all` return a blocked `DispatchResult` whose `errors()`
+holds one error starting with `"middleware panicked: "`. `emit`
+discards it.
 
 **Parameters:**
 - `F: Fn(&dyn Event) -> bool + Send + Sync + 'static` - Middleware function returning `true` to allow the event
@@ -375,6 +424,12 @@ dispatcher.on(|event: &PaymentEvent| {
 
 ### EventListener
 
+**Deprecated since 1.2.0.** No dispatcher method accepts this trait, so
+an implementation cannot be registered directly and its `priority()` is
+never read. Wrap it in a closure instead:
+`dispatcher.subscribe_with_priority(move |e| listener.handle(e), priority)`.
+It stays available for the whole 1.x line.
+
 Trait for reusable event listeners.
 
 ```rust
@@ -417,6 +472,9 @@ impl EventListener<UserRegistered> for EmailNotifier {
 ### AsyncEventListener
 
 *Available with the `async` feature*
+
+**Deprecated since 1.2.0**, for the same reason as `EventListener`. Use
+a closure with `subscribe_async` or `subscribe_async_with_priority`.
 
 Trait for async event listeners.
 
@@ -480,7 +538,8 @@ pub struct DispatchResult { /* private fields */ }
 
 ##### `is_blocked(&self) -> bool`
 
-Check if the event was blocked by middleware.
+Check if the event was blocked by middleware. A middleware that panics
+also blocks the event; the result then holds one error.
 
 ```rust
 let result = dispatcher.dispatch(event);
