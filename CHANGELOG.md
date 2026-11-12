@@ -143,7 +143,6 @@ Release-candidate-style minor for `1.0`. Re-engineered the dispatcher around thr
 
 ### Removed
 - **`tokio` runtime dependency.** Was always a phantom dep — the library never imported it.
-- The "v0.3.0 backlog" stub in `.dev/ROADMAP.md` is superseded by the actual 0.9.0 work landed here.
 
 ### Fixed
 - The internal `DispatchResult::new(Vec<Result<...>>)` constructor previously allocated a results vector for every dispatch, even on the success path. Now only allocates if at least one listener errors or panics. This is internal but observable as fewer allocations under profiling.
@@ -202,7 +201,6 @@ First stable release. Brings the dispatcher in line with the project's REPS engi
 - `parking_lot` is now exact-pinned to `=0.12.4` per REPS §Dependency Management ("Critical crates MUST have exact version pins").
 - `Cargo.toml` now carries a `# why:` justification comment above every dependency entry, per REPS §Dependency Management.
 - Integration tests renamed to the REPS `test_<subject>_<condition>_<expected>` convention. The two smoke benchmarks under `tests/benchmarks.rs` were renamed similarly.
-- `.gitignore` excludes `/.dev/`, so working notes and the internal compliance roadmap stay out of the published tree.
 
 ### Removed
 - `unsafe impl Send for EventDispatcher` and `unsafe impl Sync for EventDispatcher`. Both auto-derive from the field types; the manual impls had no safety annotation and no behavioral effect.

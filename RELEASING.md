@@ -82,13 +82,8 @@ For a `0.x` crate:
 
 5. **Write release notes.**
 
-   Create both:
-
-   - `docs/release/vx.y.z.md` — public, git-tracked, what shows up on
-     the GitHub release page.
-   - `.dev/release/vx.y.z.md` — private working draft (git-ignored).
-
-   Both should describe what changed, who is affected, breaking
+   Create `docs/release/vx.y.z.md`, which is what shows up on the
+   GitHub release page. It should describe what changed, who is affected, breaking
    changes if any, and the upgrade path.
 
 6. **Run the full local CI gate.** All commands in
@@ -168,7 +163,6 @@ For a `0.x` crate:
 
 ## REPS reference
 
-This procedure implements REPS §Versioning, REPS §Crate Packaging,
-and the in-repo [`.dev/DIRECTIVES.md`](.dev/DIRECTIVES.md) §D-1
-discipline rules. Where any of those documents disagree with this
+This procedure implements REPS §Versioning and REPS §Crate Packaging.
+Where either document disagrees with this
 file, the upstream document wins and this file MUST be amended.
